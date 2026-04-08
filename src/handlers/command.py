@@ -1,0 +1,553 @@
+"""
+Layer 4: Handlers — 命令执行与进程管理
+
+同步执行:
+  run(command, cwd, timeout, env) → 执行命令并等待完成
+
+异步任务生命周期:
+  spawn(command, cwd, timeout, env) → 创建并启动任务，返回 task_id
+  stop(task_id, signal)             → 优雅停止
+  kill(task_id)                     → 强制终止
+  status(task_id)                   → 查询状态
+  wait(task_id, timeout)            → 等待完成
+  list()                            → 列出所有任务
+
+流式 I/O:
+  read_stdout(task_id, max_chars)   → 读取标准输出
+  read_stderr(task_id, max_chars)   → 读取标准错误
+  write_stdin(task_id, data, eof)   → 写入标准输入
+
+依赖:
+- Layer 1: core (MCPConfig, CacheManager, errors)
+- Layer 2: platform (signal, defaults)
+- Layer 3: stream (StreamManager)
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from ..core.cache import CacheManager
+from ..core.config import MCPConfig
+from ..core.errors import (
+    InvalidParameterError,
+    MaxConcurrentTasksError,
+    TaskAlreadyRunningError,
+    TaskFailedError,
+    TaskNotFoundError,
+    TimeoutError,
+    WARNING_OUTPUT_TRUNCATED,
+    WARNING_SLOW_OPERATION,
+)
+from ..platform import (
+    default_shell,
+    force_kill,
+    get_subprocess_creation_flags,
+    normalize_signal_name,
+    send_interrupt,
+    send_signal_by_name,
+    send_terminate,
+)
+from ..stream import StreamManager
+from .base import BaseHandler, RequestContext, Task, TaskState
+
+logger = logging.getLogger(__name__)
+
+
+class CommandHandler(BaseHandler):
+    """
+    命令执行与进程管理 handler
+
+    额外依赖: StreamManager（通过构造函数注入）
+    """
+
+    def __init__(
+        self,
+        config: MCPConfig,
+        cache: CacheManager,
+        stream_manager: StreamManager,
+    ):
+        super().__init__(config, cache)
+        self._stream = stream_manager
+        self._tasks: dict[str, Task] = {}
+        self._timeout_tasks: dict[str, asyncio.Task[None]] = {}
+
+    # ═══════════════════════════════════════════════════
+    #  同步执行
+    # ═══════════════════════════════════════════════════
+
+    async def run(
+        self,
+        ctx: RequestContext,
+        command: str,
+        cwd: str | None = None,
+        timeout: int | None = None,
+        env: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        同步执行命令并等待完成
+
+        本质是 spawn → wait → finalize → cleanup 的快捷方式。
+
+        Args:
+            command: 要执行的命令
+            cwd: 工作目录，None 使用 workspace
+            timeout: 超时毫秒数，None 使用配置默认值
+            env: 额外环境变量
+
+        Returns:
+            {task_id, command, exit_code, stdout, stderr, duration_ms, warnings}
+        """
+        timeout_ms = timeout or self.config.performance.default_timeout_ms
+
+        # spawn
+        task_id = await self._do_spawn(command, cwd, env, timeout_ms=None)
+        task = self._tasks[task_id]
+
+        # wait
+        try:
+            await asyncio.wait_for(
+                task.process.wait(),
+                timeout=timeout_ms / 1000.0,
+            )
+        except asyncio.TimeoutError:
+            # 超时 → 强制终止
+            self._complete_task(task, TaskState.TIMED_OUT)
+            force_kill(task.process)
+            await self._safe_wait(task.process, 3.0)
+
+        # finalize
+        output = await self._stream.finalize(task_id)
+        self._stream.cleanup(task_id)
+
+        # 更新任务状态（如果还没被 timeout 设置过）
+        if task.is_active:
+            exit_code = task.process.returncode
+            task.exit_code = exit_code
+            state = TaskState.COMPLETED if exit_code == 0 else TaskState.FAILED
+            self._complete_task(task, state)
+
+        # 截断警告
+        stdout_buf = output.get("stdout_summary", {})
+        stderr_buf = output.get("stderr_summary", {})
+        if stdout_buf.get("truncated") or stderr_buf.get("truncated"):
+            ctx.warn(
+                WARNING_OUTPUT_TRUNCATED,
+                "命令输出超过缓冲区限制，已截断",
+                stdout_truncated=stdout_buf.get("truncated", False),
+                stderr_truncated=stderr_buf.get("truncated", False),
+            )
+
+        # 慢操作警告
+        if task.duration_ms and task.duration_ms > 5000:
+            ctx.warn(
+                WARNING_SLOW_OPERATION,
+                f"命令执行耗时 {task.duration_ms:.0f}ms",
+                duration_ms=round(task.duration_ms),
+            )
+
+        result = {
+            "task_id": task_id,
+            "command": command,
+            "exit_code": task.exit_code,
+            "stdout": output.get("stdout", ""),
+            "stderr": output.get("stderr", ""),
+            "duration_ms": task.duration_ms,
+        }
+
+        # 清理任务记录
+        self._tasks.pop(task_id, None)
+
+        return result
+
+    # ═══════════════════════════════════════════════════
+    #  异步任务生命周期
+    # ═══════════════════════════════════════════════════
+
+    async def spawn(
+        self,
+        ctx: RequestContext,
+        command: str,
+        cwd: str | None = None,
+        timeout: int | None = None,
+        env: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        创建并启动异步任务
+
+        Returns:
+            {task_id, command, pid, state}
+        """
+        timeout_ms = timeout or None  # spawn 默认不超时
+        task_id = await self._do_spawn(command, cwd, env, timeout_ms)
+        task = self._tasks[task_id]
+
+        return {
+            "task_id": task_id,
+            "command": command,
+            "pid": task.pid,
+            "state": task.state.value,
+        }
+
+    async def stop(
+        self,
+        ctx: RequestContext,
+        task_id: str,
+        signal: str = "interrupt",
+    ) -> dict[str, Any]:
+        """
+        优雅停止任务
+
+        Args:
+            task_id: 任务 ID
+            signal: 信号名 ("interrupt" / "terminate" / "kill")
+        """
+        task = self._get_task(task_id)
+        self._ensure_active(task)
+
+        signal_name = normalize_signal_name(signal)
+
+        if signal_name == "kill":
+            force_kill(task.process)
+        else:
+            send_signal_by_name(task.process, signal_name)
+
+        # 等待退出，超时则强杀
+        exited = await self._safe_wait(task.process, 5.0)
+        if not exited:
+            force_kill(task.process)
+            await self._safe_wait(task.process, 3.0)
+
+        task.exit_code = task.process.returncode
+        task.signal = signal_name
+        self._complete_task(task, TaskState.STOPPED if signal_name != "kill" else TaskState.KILLED)
+
+        return task.to_dict()
+
+    async def kill(
+        self,
+        ctx: RequestContext,
+        task_id: str,
+    ) -> dict[str, Any]:
+        """强制终止任务"""
+        task = self._get_task(task_id)
+        self._ensure_active(task)
+
+        force_kill(task.process)
+        await self._safe_wait(task.process, 5.0)
+
+        task.exit_code = task.process.returncode
+        task.signal = "kill"
+        self._complete_task(task, TaskState.KILLED)
+
+        return task.to_dict()
+
+    async def status(
+        self,
+        ctx: RequestContext,
+        task_id: str,
+    ) -> dict[str, Any]:
+        """查询任务状态"""
+        task = self._get_task(task_id)
+        result = task.to_dict()
+
+        # 附加流信息
+        if self._stream.has_task(task_id):
+            result["stream"] = self._stream.summary(task_id)
+
+        return result
+
+    async def wait(
+        self,
+        ctx: RequestContext,
+        task_id: str,
+        timeout: int | None = None,
+    ) -> dict[str, Any]:
+        """
+        等待任务完成
+
+        Args:
+            task_id: 任务 ID
+            timeout: 超时毫秒数
+
+        Returns:
+            任务最终状态
+        """
+        task = self._get_task(task_id)
+
+        if not task.is_active:
+            return task.to_dict()
+
+        timeout_s = (timeout or self.config.performance.default_timeout_ms) / 1000.0
+
+        try:
+            await asyncio.wait_for(task.process.wait(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            raise TimeoutError(
+                f"等待任务超时: {task_id}",
+                details={"task_id": task_id, "timeout_ms": timeout},
+            )
+
+        # 更新状态
+        if task.is_active:
+            exit_code = task.process.returncode
+            task.exit_code = exit_code
+            state = TaskState.COMPLETED if exit_code == 0 else TaskState.FAILED
+            self._complete_task(task, state)
+
+        return task.to_dict()
+
+    async def list_tasks(
+        self,
+        ctx: RequestContext,
+    ) -> dict[str, Any]:
+        """列出所有任务"""
+        tasks = [t.to_dict() for t in self._tasks.values()]
+        active = sum(1 for t in self._tasks.values() if t.is_active)
+
+        return {
+            "tasks": tasks,
+            "total": len(tasks),
+            "active": active,
+        }
+
+    # ═══════════════════════════════════════════════════
+    #  流式 I/O
+    # ═══════════════════════════════════════════════════
+
+    async def read_stdout(
+        self,
+        ctx: RequestContext,
+        task_id: str,
+        max_chars: int = 8192,
+    ) -> dict[str, Any]:
+        """
+        读取标准输出（消费式）
+
+        每次调用返回自上次调用以来的新输出。
+
+        Returns:
+            {task_id, output, eof}
+        """
+        self._get_task(task_id)  # 验证存在
+
+        reader_id = ctx.request_id
+        output = self._stream.read(task_id, "stdout", reader_id=reader_id, max_chars=max_chars)
+        buf = self._stream.get_buffer(task_id, "stdout")
+
+        return {
+            "task_id": task_id,
+            "output": output,
+            "eof": buf.eof and not buf.has_unread(reader_id),
+        }
+
+    async def read_stderr(
+        self,
+        ctx: RequestContext,
+        task_id: str,
+        max_chars: int = 8192,
+    ) -> dict[str, Any]:
+        """读取标准错误（消费式）"""
+        self._get_task(task_id)
+
+        reader_id = ctx.request_id
+        output = self._stream.read(task_id, "stderr", reader_id=reader_id, max_chars=max_chars)
+        buf = self._stream.get_buffer(task_id, "stderr")
+
+        return {
+            "task_id": task_id,
+            "output": output,
+            "eof": buf.eof and not buf.has_unread(reader_id),
+        }
+
+    async def write_stdin(
+        self,
+        ctx: RequestContext,
+        task_id: str,
+        data: str,
+        eof: bool = False,
+    ) -> dict[str, Any]:
+        """
+        写入标准输入
+
+        Args:
+            task_id: 任务 ID
+            data: 要写入的文本
+            eof: 是否关闭 stdin（发送 EOF）
+        """
+        task = self._get_task(task_id)
+        self._ensure_active(task)
+
+        if task.process.stdin is None:
+            raise InvalidParameterError(
+                f"任务 stdin 不可用: {task_id}",
+                details={"task_id": task_id},
+            )
+
+        if data:
+            task.process.stdin.write(data.encode("utf-8"))
+            await task.process.stdin.drain()
+
+        if eof:
+            task.process.stdin.close()
+            await task.process.stdin.wait_closed()
+
+        return {
+            "task_id": task_id,
+            "written": len(data),
+            "eof": eof,
+        }
+
+    # ═══════════════════════════════════════════════════
+    #  内部方法
+    # ═══════════════════════════════════════════════════
+
+    async def _do_spawn(
+        self,
+        command: str,
+        cwd: str | None,
+        env: dict[str, str] | None,
+        timeout_ms: int | None,
+    ) -> str:
+        """实际的进程创建逻辑"""
+        # 并发限制检查
+        active = sum(1 for t in self._tasks.values() if t.is_active)
+        max_tasks = self.config.performance.max_concurrent_tasks
+        if active >= max_tasks:
+            raise MaxConcurrentTasksError(
+                f"并发任务数已达上限: {active}/{max_tasks}",
+                details={"active": active, "limit": max_tasks},
+            )
+
+        task_id = uuid.uuid4().hex[:12]
+        work_dir = cwd or str(self.workspace)
+
+        # 合并环境变量
+        proc_env = dict(os.environ)
+        if env:
+            proc_env.update(env)
+
+        # 创建子进程
+        creation_flags = get_subprocess_creation_flags()
+        kwargs: dict[str, Any] = {
+            "stdin": asyncio.subprocess.PIPE,
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+            "cwd": work_dir,
+            "env": proc_env,
+        }
+        if creation_flags:
+            kwargs["creationflags"] = creation_flags
+
+        process = await asyncio.create_subprocess_shell(command, **kwargs)
+
+        # 创建 Task
+        now = datetime.now(timezone.utc)
+        task = Task(
+            task_id=task_id,
+            command=command,
+            cwd=work_dir,
+            env=env,
+            state=TaskState.RUNNING,
+            process=process,
+            pid=process.pid,
+            created_at=now,
+            started_at=now,
+        )
+        self._tasks[task_id] = task
+
+        # 启动流管理
+        self._stream.start(task_id, process)
+
+        # 超时监控
+        if timeout_ms:
+            monitor = asyncio.create_task(self._timeout_monitor(task, timeout_ms))
+            self._timeout_tasks[task_id] = monitor
+
+        logger.info(
+            "Task spawned: task_id=%s, command=%r, pid=%s",
+            task_id, command, process.pid,
+        )
+
+        return task_id
+
+    async def _timeout_monitor(self, task: Task, timeout_ms: int) -> None:
+        """超时监控协程"""
+        try:
+            await asyncio.sleep(timeout_ms / 1000.0)
+            # 超时了，进程还在运行
+            if task.is_active and task.process.returncode is None:
+                logger.warning(
+                    "Task timed out: task_id=%s, timeout=%dms",
+                    task.task_id, timeout_ms,
+                )
+                force_kill(task.process)
+                await self._safe_wait(task.process, 3.0)
+                task.exit_code = task.process.returncode
+                self._complete_task(task, TaskState.TIMED_OUT)
+        except asyncio.CancelledError:
+            pass  # 任务正常结束，monitor 被取消
+
+    def _get_task(self, task_id: str) -> Task:
+        """获取任务，不存在则抛异常"""
+        task = self._tasks.get(task_id)
+        if task is None:
+            raise TaskNotFoundError(
+                f"任务不存在: {task_id}",
+                details={"task_id": task_id},
+            )
+        return task
+
+    @staticmethod
+    def _ensure_active(task: Task) -> None:
+        """确保任务处于活跃状态"""
+        if not task.is_active:
+            raise TaskNotFoundError(
+                f"任务已结束: {task.task_id} (state={task.state.value})",
+                details={"task_id": task.task_id, "state": task.state.value},
+            )
+
+    def _complete_task(self, task: Task, state: TaskState) -> None:
+        """标记任务完成"""
+        task.state = state
+        task.completed_at = datetime.now(timezone.utc)
+
+        # 取消超时监控
+        monitor = self._timeout_tasks.pop(task.task_id, None)
+        if monitor and not monitor.done():
+            monitor.cancel()
+
+    @staticmethod
+    async def _safe_wait(
+        process: asyncio.subprocess.Process, timeout: float
+    ) -> bool:
+        """安全等待进程退出，返回是否成功退出"""
+        try:
+            await asyncio.wait_for(process.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    async def cleanup_completed(self) -> int:
+        """
+        清理所有已完成任务的资源
+
+        Returns:
+            清理的任务数
+        """
+        completed = [
+            tid for tid, t in self._tasks.items() if not t.is_active
+        ]
+        for tid in completed:
+            if self._stream.has_task(tid):
+                await self._stream.finalize(tid)
+                self._stream.cleanup(tid)
+            self._tasks.pop(tid, None)
+
+        return len(completed)
