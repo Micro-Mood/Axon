@@ -22,7 +22,7 @@ from typing import Any
 
 from ..core.cache import CacheManager
 from ..core.config import ConfigHolder, MCPConfig
-from ..core.errors import InvalidParameterError
+from ..core.errors import BlockedPathError, InvalidParameterError
 from .base import BaseHandler, RequestContext
 
 # 从顶层 __init__.py 获取版本号
@@ -136,6 +136,19 @@ class SystemHandler(BaseHandler):
                 f"工作区路径不是目录: {root_path}",
                 details={"root_path": root_path},
             )
+
+        # 检查 blocked_paths — 禁止切换到系统敏感目录
+        import os
+        resolved_str = str(p)
+        for blocked in self.config.security.blocked_paths:
+            blocked_resolved = str(Path(blocked).resolve())
+            if resolved_str == blocked_resolved or resolved_str.startswith(
+                blocked_resolved + os.sep
+            ):
+                raise BlockedPathError(
+                    f"工作区路径被禁止: {root_path}",
+                    details={"root_path": resolved_str, "blocked_by": blocked},
+                )
 
         self._config_holder.update(workspace={"root_path": str(p)})
 

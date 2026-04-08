@@ -14,17 +14,36 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 from pathlib import Path
 
 from .config import SecurityConfig
 from .errors import (
     BlockedCommandError,
     BlockedPathError,
+    InvalidParameterError,
     PathOutsideWorkspaceError,
     PermissionDeniedError,
     SizeLimitExceededError,
     SymlinkError,
 )
+
+# 危险环境变量 — 设置这些可以劫持进程行为
+_DANGEROUS_ENV_KEYS = frozenset({
+    # Unix: 动态链接劫持
+    "LD_PRELOAD", "LD_LIBRARY_PATH",
+    "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+    # 执行路径劫持
+    "PATH",
+    # Python 相关
+    "PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME",
+    # Ruby/Node/Perl
+    "RUBYLIB", "NODE_PATH", "PERL5LIB",
+    # 权限提升
+    "SUDO_ASKPASS",
+    # Shell 配置
+    "ENV", "BASH_ENV", "CDPATH", "IFS",
+})
 
 
 class SecurityChecker:
@@ -144,9 +163,18 @@ class SecurityChecker:
         """
         校验命令安全性
 
+        检查顺序:
+        1. Shell 语法检查（引号闭合、转义完整性）
+        2. 黑名单命令匹配
+
         Raises:
-            BlockedCommandError
+            InvalidParameterError: shell 语法错误
+            BlockedCommandError: 命令在黑名单中
         """
+        # 语法预检: 引号闭合、反斜杠转义
+        self._check_shell_syntax(command)
+
+        # 黑名单匹配
         for i, pattern in enumerate(self._blocked_cmd_patterns):
             if pattern.search(command):
                 raise BlockedCommandError(
@@ -156,6 +184,132 @@ class SecurityChecker:
                         "blocked_by": self._config.blocked_commands[i],
                     },
                 )
+
+    def validate_cwd(self, cwd: str, workspace: Path) -> Path:
+        """
+        校验工作目录安全性
+
+        工作目录必须:
+        1. 存在且是目录
+        2. 在 workspace 范围内
+        3. 不在 blocked_paths 中
+
+        Args:
+            cwd: 工作目录路径字符串
+            workspace: 工作区根路径
+
+        Returns:
+            验证通过的绝对路径
+
+        Raises:
+            InvalidParameterError: 路径不存在/不是目录
+            PathOutsideWorkspaceError: 不在 workspace 内
+            BlockedPathError: 在黑名单中
+        """
+        resolved = Path(cwd).resolve()
+
+        if not resolved.exists():
+            raise InvalidParameterError(
+                f"工作目录不存在: {cwd}",
+                details={"cwd": str(resolved)},
+            )
+        if not resolved.is_dir():
+            raise InvalidParameterError(
+                f"工作目录不是目录: {cwd}",
+                details={"cwd": str(resolved)},
+            )
+
+        # workspace 边界检查
+        try:
+            resolved.relative_to(workspace)
+        except ValueError:
+            raise PathOutsideWorkspaceError(
+                f"工作目录不在工作区内: {cwd}",
+                details={"cwd": str(resolved), "workspace": str(workspace)},
+            )
+
+        # blocked_paths 检查
+        resolved_str = str(resolved)
+        for blocked in self._config.blocked_paths:
+            blocked_resolved = str(Path(blocked).resolve())
+            if resolved_str == blocked_resolved or resolved_str.startswith(
+                blocked_resolved + os.sep
+            ):
+                raise BlockedPathError(
+                    f"工作目录被禁止: {cwd}",
+                    details={"cwd": resolved_str, "blocked_by": blocked},
+                )
+
+        return resolved
+
+    def validate_env(self, env: dict[str, str]) -> None:
+        """
+        校验环境变量安全性
+
+        禁止修改高危环境变量（PATH, LD_PRELOAD 等）。
+
+        Args:
+            env: 待注入的环境变量字典
+
+        Raises:
+            InvalidParameterError: 包含危险环境变量
+        """
+        if not env:
+            return
+
+        dangerous_found = []
+        for key in env:
+            if key.upper() in _DANGEROUS_ENV_KEYS:
+                dangerous_found.append(key)
+
+        if dangerous_found:
+            raise InvalidParameterError(
+                f"包含危险环境变量: {', '.join(dangerous_found)}",
+                details={
+                    "dangerous_keys": dangerous_found,
+                    "blocked_keys": sorted(_DANGEROUS_ENV_KEYS),
+                },
+                suggestion="这些环境变量可能被用于劫持进程行为，禁止通过 API 设置",
+            )
+
+    @staticmethod
+    def _check_shell_syntax(command: str) -> None:
+        """
+        检查 shell 命令的语法完整性
+
+        使用 shlex.split() 做词法分析，检测:
+        - 未闭合的单引号: echo it's done
+        - 未闭合的双引号: echo "hello
+        - 未闭合的反引号: echo `whoami
+        - 行尾悬空反斜杠: echo hello\\
+
+        注意: shlex 是 POSIX shell 语法。Windows cmd.exe 的语法不同，
+        但 asyncio.create_subprocess_shell 在 Windows 上也是通过
+        cmd.exe /c 执行，其引号规则更宽松，这里的检查偏保守。
+
+        Args:
+            command: shell 命令字符串
+
+        Raises:
+            InvalidParameterError: 语法不完整
+        """
+        if not command or not command.strip():
+            raise InvalidParameterError(
+                "命令不能为空",
+                details={"command": command},
+            )
+
+        try:
+            shlex.split(command)
+        except ValueError as e:
+            # shlex 会抛出:
+            # "No closing quotation" — 引号未闭合
+            # "No escaped character" — 尾部悬空反斜杠
+            raise InvalidParameterError(
+                f"Shell 命令语法错误: {e}",
+                details={"command": command[:500]},
+                suggestion="检查引号是否闭合，反斜杠后是否有字符",
+            )
 
     def validate_shell(self, shell: str) -> None:
         """

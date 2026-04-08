@@ -41,6 +41,7 @@ from ..core.errors import (
     PatchApplyError,
     PermissionDeniedError,
     SizeLimitExceededError,
+    TaskFailedError,
     Warning,
     WARNING_LARGE_FILE,
     WARNING_PARTIAL_RESULT,
@@ -48,7 +49,9 @@ from ..core.errors import (
 from ..platform import (
     detect_file_encoding,
     get_file_attributes_from_stat,
+    has_control_chars,
     is_hidden,
+    validate_encoding,
 )
 from .base import BaseHandler, RequestContext
 
@@ -110,8 +113,10 @@ class FileHandler(BaseHandler):
         # 检测编码
         if encoding is None:
             # 读取文件头部用于编码检测
-            head = path.read_bytes()[:4096]
+            head = path.read_bytes()[:8192]
             encoding = detect_file_encoding(head)
+        else:
+            encoding = self._validate_encoding(encoding)
 
         # 读取
         try:
@@ -123,6 +128,12 @@ class FileHandler(BaseHandler):
                 details={"path": str(path), "encoding": encoding},
                 cause=e,
                 suggestion="尝试指定正确的 encoding 参数",
+            )
+        except LookupError as e:
+            raise InvalidParameterError(
+                f"不支持的编码: {encoding}",
+                details={"path": str(path), "encoding": encoding},
+                cause=e,
             )
 
         lines = content.splitlines(keepends=True)
@@ -260,6 +271,8 @@ class FileHandler(BaseHandler):
         if cached is not None:
             return cached
 
+        skipped = 0
+
         try:
             iterator = path.rglob(pattern or "*") if recursive else path.glob(pattern or "*")
 
@@ -275,6 +288,8 @@ class FileHandler(BaseHandler):
                 try:
                     s = item.stat()
                 except OSError:
+                    skipped += 1
+                    logger.debug("stat 失败，跳过: %s", item)
                     continue
 
                 entries.append({
@@ -299,6 +314,12 @@ class FileHandler(BaseHandler):
                 f"结果已截断: 共 {total} 项，仅返回 {limit} 项",
                 total=total,
                 returned=limit,
+            )
+        if skipped > 0:
+            ctx.warn(
+                WARNING_PARTIAL_RESULT,
+                f"有 {skipped} 个条目因 stat 失败被跳过（权限或链接损坏）",
+                skipped=skipped,
             )
 
         result = {
@@ -340,11 +361,36 @@ class FileHandler(BaseHandler):
                 suggestion="设置 overwrite=true 以覆写",
             )
 
+        # 校验编码名
+        encoding = self._validate_encoding(encoding)
+
+        # 检查控制字符
+        if content and has_control_chars(content):
+            ctx.warn(
+                WARNING_LARGE_FILE,
+                "内容包含不安全的控制字符（NUL 等），可能导致部分工具异常",
+                path=str(path),
+            )
+
         # 确保父目录存在
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        async with aiofiles.open(path, mode="w", encoding=encoding) as f:
-            await f.write(content)
+        try:
+            async with aiofiles.open(path, mode="w", encoding=encoding) as f:
+                await f.write(content)
+        except UnicodeEncodeError as e:
+            raise EncodingError(
+                f"内容无法用 {encoding} 编码: {e}",
+                details={"path": str(path), "encoding": encoding},
+                cause=e,
+                suggestion="尝试使用 encoding='utf-8'",
+            )
+        except OSError as e:
+            raise TaskFailedError(
+                f"文件写入失败: {e}",
+                details={"path": str(path), "operation": "create_file"},
+                cause=e,
+            )
 
         size = path.stat().st_size
 
@@ -380,8 +426,33 @@ class FileHandler(BaseHandler):
                 suggestion="使用 create_file 创建新文件",
             )
 
-        async with aiofiles.open(path, mode="w", encoding=encoding) as f:
-            await f.write(content)
+        # 校验编码名
+        encoding = self._validate_encoding(encoding)
+
+        # 检查控制字符
+        if content and has_control_chars(content):
+            ctx.warn(
+                WARNING_LARGE_FILE,
+                "内容包含不安全的控制字符（NUL 等），可能导致部分工具异常",
+                path=str(path),
+            )
+
+        try:
+            async with aiofiles.open(path, mode="w", encoding=encoding) as f:
+                await f.write(content)
+        except UnicodeEncodeError as e:
+            raise EncodingError(
+                f"内容无法用 {encoding} 编码: {e}",
+                details={"path": str(path), "encoding": encoding},
+                cause=e,
+                suggestion="尝试使用 encoding='utf-8'",
+            )
+        except OSError as e:
+            raise TaskFailedError(
+                f"文件写入失败: {e}",
+                details={"path": str(path), "operation": "write_file"},
+                cause=e,
+            )
 
         size = path.stat().st_size
         self._invalidate_path_cache(path)
@@ -399,7 +470,14 @@ class FileHandler(BaseHandler):
         recursive: bool = True,
     ) -> dict[str, Any]:
         """创建目录"""
-        path.mkdir(parents=recursive, exist_ok=True)
+        try:
+            path.mkdir(parents=recursive, exist_ok=True)
+        except OSError as e:
+            raise TaskFailedError(
+                f"目录创建失败: {e}",
+                details={"path": str(path), "operation": "create_directory"},
+                cause=e,
+            )
         self._invalidate_path_cache(path.parent)
         return {"path": str(path), "created": True}
 
@@ -426,7 +504,7 @@ class FileHandler(BaseHandler):
             new_text: 替换后的文本
             encoding: 文件编码
         """
-        content = await self._read_text(path, encoding)
+        content, detected_enc = await self._read_text(path, encoding)
         lines = content.splitlines(keepends=True)
         total = len(lines)
 
@@ -447,8 +525,21 @@ class FileHandler(BaseHandler):
         lines[start_line - 1 : end_line] = new_lines
         result_content = "".join(lines)
 
-        async with aiofiles.open(path, mode="w", encoding=encoding) as f:
-            await f.write(result_content)
+        try:
+            async with aiofiles.open(path, mode="w", encoding=detected_enc) as f:
+                await f.write(result_content)
+        except UnicodeEncodeError as e:
+            raise EncodingError(
+                f"文件编码写入失败 (encoding={detected_enc}): {e}",
+                details={"path": str(path), "encoding": detected_enc},
+                cause=e,
+            )
+        except OSError as e:
+            raise TaskFailedError(
+                f"文件写入失败: {e}",
+                details={"path": str(path), "operation": "replace_range"},
+                cause=e,
+            )
 
         self._invalidate_path_cache(path)
 
@@ -477,7 +568,7 @@ class FileHandler(BaseHandler):
             text: 要插入的文本
             encoding: 文件编码
         """
-        content = await self._read_text(path, encoding)
+        content, detected_enc = await self._read_text(path, encoding)
         lines = content.splitlines(keepends=True)
         total = len(lines)
 
@@ -495,8 +586,21 @@ class FileHandler(BaseHandler):
         lines[line - 1 : line - 1] = insert_lines
         result_content = "".join(lines)
 
-        async with aiofiles.open(path, mode="w", encoding=encoding) as f:
-            await f.write(result_content)
+        try:
+            async with aiofiles.open(path, mode="w", encoding=detected_enc) as f:
+                await f.write(result_content)
+        except UnicodeEncodeError as e:
+            raise EncodingError(
+                f"文件编码写入失败 (encoding={detected_enc}): {e}",
+                details={"path": str(path), "encoding": detected_enc},
+                cause=e,
+            )
+        except OSError as e:
+            raise TaskFailedError(
+                f"文件写入失败: {e}",
+                details={"path": str(path), "operation": "insert_text"},
+                cause=e,
+            )
 
         self._invalidate_path_cache(path)
 
@@ -523,7 +627,7 @@ class FileHandler(BaseHandler):
             start_line: 起始行号（1-based，含）
             end_line: 结束行号（1-based，含）
         """
-        content = await self._read_text(path, encoding)
+        content, detected_enc = await self._read_text(path, encoding)
         lines = content.splitlines(keepends=True)
         total = len(lines)
 
@@ -538,8 +642,21 @@ class FileHandler(BaseHandler):
         del lines[start_line - 1 : end_line]
         result_content = "".join(lines)
 
-        async with aiofiles.open(path, mode="w", encoding=encoding) as f:
-            await f.write(result_content)
+        try:
+            async with aiofiles.open(path, mode="w", encoding=detected_enc) as f:
+                await f.write(result_content)
+        except UnicodeEncodeError as e:
+            raise EncodingError(
+                f"文件编码写入失败 (encoding={detected_enc}): {e}",
+                details={"path": str(path), "encoding": detected_enc},
+                cause=e,
+            )
+        except OSError as e:
+            raise TaskFailedError(
+                f"文件写入失败: {e}",
+                details={"path": str(path), "operation": "delete_range"},
+                cause=e,
+            )
 
         self._invalidate_path_cache(path)
 
@@ -570,7 +687,7 @@ class FileHandler(BaseHandler):
         Returns:
             {path, applied, hunks, dry_run}
         """
-        content = await self._read_text(path, encoding)
+        content, detected_enc = await self._read_text(path, encoding)
         original_lines = content.splitlines(keepends=True)
 
         # 解析 patch，提取 hunk
@@ -594,8 +711,21 @@ class FileHandler(BaseHandler):
 
         if not dry_run:
             result_content = "".join(result_lines)
-            async with aiofiles.open(path, mode="w", encoding=encoding) as f:
-                await f.write(result_content)
+            try:
+                async with aiofiles.open(path, mode="w", encoding=detected_enc) as f:
+                    await f.write(result_content)
+            except UnicodeEncodeError as e:
+                raise EncodingError(
+                    f"文件编码写入失败 (encoding={detected_enc}): {e}",
+                    details={"path": str(path), "encoding": detected_enc},
+                    cause=e,
+                )
+            except OSError as e:
+                raise TaskFailedError(
+                    f"文件写入失败: {e}",
+                    details={"path": str(path), "operation": "apply_patch"},
+                    cause=e,
+                )
             self._invalidate_path_cache(path)
 
         return {
@@ -635,7 +765,14 @@ class FileHandler(BaseHandler):
             )
 
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(source), str(dest))
+        try:
+            shutil.move(str(source), str(dest))
+        except OSError as e:
+            raise TaskFailedError(
+                f"文件移动失败: {e}",
+                details={"source": str(source), "dest": str(dest), "operation": "move_file"},
+                cause=e,
+            )
 
         self._invalidate_path_cache(source)
         self._invalidate_path_cache(dest)
@@ -663,7 +800,14 @@ class FileHandler(BaseHandler):
             )
 
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(source), str(dest))
+        try:
+            shutil.copy2(str(source), str(dest))
+        except OSError as e:
+            raise TaskFailedError(
+                f"文件复制失败: {e}",
+                details={"source": str(source), "dest": str(dest), "operation": "copy_file"},
+                cause=e,
+            )
 
         self._invalidate_path_cache(dest)
 
@@ -691,7 +835,14 @@ class FileHandler(BaseHandler):
                 suggestion="使用 delete_directory 删除目录",
             )
 
-        path.unlink()
+        try:
+            path.unlink()
+        except OSError as e:
+            raise TaskFailedError(
+                f"文件删除失败: {e}",
+                details={"path": str(path), "operation": "delete_file"},
+                cause=e,
+            )
         self._invalidate_path_cache(path)
 
         return {"path": str(path), "deleted": True}
@@ -720,7 +871,14 @@ class FileHandler(BaseHandler):
             )
 
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(source), str(dest))
+        try:
+            shutil.move(str(source), str(dest))
+        except OSError as e:
+            raise TaskFailedError(
+                f"目录移动失败: {e}",
+                details={"source": str(source), "dest": str(dest), "operation": "move_directory"},
+                cause=e,
+            )
 
         self._invalidate_path_cache(source)
         self._invalidate_path_cache(dest)
@@ -754,15 +912,22 @@ class FileHandler(BaseHandler):
             )
 
         if recursive:
-            if force:
-                # 清除只读属性后删除
-                def _on_error(func: Any, fpath: str, exc_info: Any) -> None:
-                    os.chmod(fpath, stat.S_IWRITE)
-                    func(fpath)
+            try:
+                if force:
+                    # 清除只读属性后删除
+                    def _on_error(func: Any, fpath: str, exc_info: Any) -> None:
+                        os.chmod(fpath, stat.S_IWRITE)
+                        func(fpath)
 
-                shutil.rmtree(str(path), onerror=_on_error)
-            else:
-                shutil.rmtree(str(path))
+                    shutil.rmtree(str(path), onerror=_on_error)
+                else:
+                    shutil.rmtree(str(path))
+            except OSError as e:
+                raise TaskFailedError(
+                    f"目录删除失败: {e}",
+                    details={"path": str(path), "operation": "delete_directory"},
+                    cause=e,
+                )
         else:
             try:
                 path.rmdir()
@@ -781,19 +946,72 @@ class FileHandler(BaseHandler):
     #  内部方法
     # ═══════════════════════════════════════════════════
 
-    async def _read_text(self, path: Path, encoding: str = "utf-8") -> str:
-        """读取文件文本内容"""
+    @staticmethod
+    def _validate_encoding(encoding: str) -> str:
+        """
+        校验编码名是否合法
+
+        Args:
+            encoding: 编码名
+
+        Returns:
+            标准化的编码名
+
+        Raises:
+            InvalidParameterError: 编码名无效
+        """
+        normalized = validate_encoding(encoding)
+        if normalized is None:
+            raise InvalidParameterError(
+                f"不支持的编码: {encoding}",
+                details={"encoding": encoding},
+                suggestion="使用 Python 支持的编码名，如 utf-8, gbk, cp936, latin-1 等",
+            )
+        return normalized
+
+    async def _read_text(
+        self, path: Path, encoding: str | None = None
+    ) -> tuple[str, str]:
+        """
+        读取文件文本内容，自动检测编码
+
+        Args:
+            path: 文件路径
+            encoding: 指定编码，None 则自动检测
+
+        Returns:
+            (content, detected_encoding) — 文件内容和实际使用的编码
+
+        Raises:
+            FileNotFoundError: 文件不存在
+            EncodingError: 解码失败
+            InvalidParameterError: 编码名无效
+        """
         if not path.exists():
             raise FileNotFoundError(
                 f"文件不存在: {path}",
                 details={"path": str(path)},
             )
+
+        # 编码检测/校验
+        if encoding is not None:
+            encoding = self._validate_encoding(encoding)
+        else:
+            head = path.read_bytes()[:8192]
+            encoding = detect_file_encoding(head)
+
         try:
             async with aiofiles.open(path, mode="r", encoding=encoding) as f:
-                return await f.read()
+                return (await f.read(), encoding)
         except UnicodeDecodeError as e:
             raise EncodingError(
                 f"文件解码失败 (encoding={encoding}): {e}",
+                details={"path": str(path), "encoding": encoding},
+                cause=e,
+            )
+        except LookupError as e:
+            raise InvalidParameterError(
+                f"不支持的编码: {encoding}",
                 details={"path": str(path), "encoding": encoding},
                 cause=e,
             )

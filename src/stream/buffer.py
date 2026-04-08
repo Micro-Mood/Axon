@@ -4,14 +4,15 @@ Layer 3: Stream — 输出缓冲区
 每个进程的每个流（stdout/stderr）对应一个 OutputBuffer 实例。
 
 特性:
-- 写入时自动解码（通过 platform.decode_output）
+- 写入时通过增量解码器解码（解决 chunk 边界多字节字符劈裂）
 - 硬性大小限制，超限自动截断（不会 OOM）
+- 截断时对齐 UTF-8 字符边界，不会从多字节字符中间切开
 - 支持多消费者（每个 reader 维护独立游标）
 - 消费式读取 read() + 非破坏性 peek() + 全量 drain()
-- 读过的数据不删除（与 AutomateX 的区别），多消费者各自独立
+- 读过的数据不删除，多消费者各自独立
 
 依赖:
-- mcp.platform.decode_output (编码解码)
+- mcp.platform.encoding (IncrementalStreamDecoder, safe_truncate_bytes)
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import base64
 import threading
 from dataclasses import dataclass, field
 
-from ..platform import decode_output
+from ..platform.encoding import IncrementalStreamDecoder, safe_truncate_bytes
 
 
 # ═══════════════════════════════════════════════════════
@@ -51,6 +52,7 @@ class OutputBuffer:
         "_readers",
         "_encoding_used",
         "_lock",
+        "_decoder",
     )
 
     def __init__(self, name: str, max_size: int = 10 * 1024 * 1024):
@@ -80,6 +82,9 @@ class OutputBuffer:
         # 线程安全锁
         self._lock = threading.Lock()
 
+        # 增量解码器 — 解决 chunk 边界多字节字符劫裂
+        self._decoder = IncrementalStreamDecoder()
+
     # ═══════════════════════════════════════════════════
     #  写入端
     # ═══════════════════════════════════════════════════
@@ -93,9 +98,9 @@ class OutputBuffer:
         2. 已截断 → 丢弃，返回 0
         3. 检查剩余空间:
            a. 完全放得下 → 全部写入
-           b. 放不下 → 写入能放下的部分，标记截断
+           b. 放不下 → 按 UTF-8 字符边界截断，标记截断
         4. 追加到 _raw
-        5. 调 platform.decode_output() 解码
+        5. 通过增量解码器解码（处理多字节字符跨 chunk 劫裂）
         6. 追加到 _decoded
 
         Args:
@@ -121,9 +126,9 @@ class OutputBuffer:
                 self._truncated = True
                 return 0
 
-            # 部分截断: 只写入能放下的部分
+            # 部分截断: 只写入能放下的部分，对齐到 UTF-8 字符边界
             if data_len > remaining:
-                data = data[:remaining]
+                data = safe_truncate_bytes(data, remaining)
                 self._truncated = True
 
             actual_len = len(data)
@@ -131,17 +136,23 @@ class OutputBuffer:
             # 追加原始字节
             self._raw.extend(data)
 
-            # 解码并追加
-            text, encoding = decode_output(data)
-            self._decoded += text
-            self._encoding_used = encoding
+            # 通过增量解码器解码，自动处理跨 chunk 的多字节字符
+            text = self._decoder.decode(data)
+            if text:
+                self._decoded += text
+                self._encoding_used = self._decoder.encoding_used
 
             return actual_len
 
     def mark_eof(self) -> None:
-        """标记流结束（进程管道关闭）"""
+        """标记流结束（进程管道关闭），刷出解码器中所有暂存字节"""
         with self._lock:
             self._eof = True
+            # 刷出增量解码器中可能暂存的不完整字节
+            remaining_text = self._decoder.flush()
+            if remaining_text:
+                self._decoded += remaining_text
+                self._encoding_used = self._decoder.encoding_used
 
     # ═══════════════════════════════════════════════════
     #  读取端 — 消费式

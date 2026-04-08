@@ -38,11 +38,13 @@ class RequestContext:
     - 携带请求元数据（method, params, request_id）
     - 中间件写入校验后的路径（validated_paths）
     - handler/middleware 追加警告（warnings）
+    - 计算请求耗时（duration_ms）
     """
 
     method: str
     params: dict[str, Any]
     request_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    start_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     timestamp: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -54,6 +56,11 @@ class RequestContext:
     def warn(self, code: str, message: str, **details: Any) -> None:
         """追加一条警告"""
         self.warnings.append(Warning(code=code, message=message, details=details))
+
+    @property
+    def duration_ms(self) -> float:
+        """请求耗时（毫秒）"""
+        return (datetime.now(timezone.utc) - self.start_time).total_seconds() * 1000
 
 
 # ═══════════════════════════════════════════════════════

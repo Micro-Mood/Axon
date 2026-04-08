@@ -30,10 +30,17 @@ IS_POSIX: bool = IS_LINUX or IS_MACOS
 # ═══════════════════════════════════════════════════════
 
 from .encoding import (
+    IncrementalStreamDecoder,
     decode_output,
     detect_file_encoding,
+    encode_input,
     get_console_encoding,
+    has_control_chars,
+    reset_console_encoding_cache,
     safe_encode,
+    safe_truncate_bytes,
+    sanitize_control_chars,
+    validate_encoding,
 )
 
 # ═══════════════════════════════════════════════════════
@@ -94,6 +101,13 @@ __all__ = [
     "decode_output",
     "detect_file_encoding",
     "safe_encode",
+    "validate_encoding",
+    "encode_input",
+    "IncrementalStreamDecoder",
+    "safe_truncate_bytes",
+    "sanitize_control_chars",
+    "has_control_chars",
+    "reset_console_encoding_cache",
     # 进程信号
     "SIGNAL_INTERRUPT",
     "SIGNAL_TERMINATE",

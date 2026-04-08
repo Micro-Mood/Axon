@@ -45,8 +45,10 @@ from ..core.errors import (
     WARNING_OUTPUT_TRUNCATED,
     WARNING_SLOW_OPERATION,
 )
+from ..core.security import SecurityChecker
 from ..platform import (
     default_shell,
+    encode_input,
     force_kill,
     get_subprocess_creation_flags,
     normalize_signal_name,
@@ -72,9 +74,11 @@ class CommandHandler(BaseHandler):
         config: MCPConfig,
         cache: CacheManager,
         stream_manager: StreamManager,
+        security: SecurityChecker | None = None,
     ):
         super().__init__(config, cache)
         self._stream = stream_manager
+        self._security = security
         self._tasks: dict[str, Task] = {}
         self._timeout_tasks: dict[str, asyncio.Task[None]] = {}
 
@@ -391,7 +395,8 @@ class CommandHandler(BaseHandler):
             )
 
         if data:
-            task.process.stdin.write(data.encode("utf-8"))
+            encoded_data, enc_used = encode_input(data)
+            task.process.stdin.write(encoded_data)
             await task.process.stdin.drain()
 
         if eof:
@@ -425,8 +430,21 @@ class CommandHandler(BaseHandler):
                 details={"active": active, "limit": max_tasks},
             )
 
-        task_id = uuid.uuid4().hex[:12]
+        # 安全校验: 命令语法 + 黑名单
+        if self._security:
+            self._security.validate_command(command)
+
+        # 安全校验: 工作目录
         work_dir = cwd or str(self.workspace)
+        if cwd and self._security:
+            resolved_cwd = self._security.validate_cwd(cwd, self.workspace)
+            work_dir = str(resolved_cwd)
+
+        # 安全校验: 环境变量
+        if env and self._security:
+            self._security.validate_env(env)
+
+        task_id = uuid.uuid4().hex[:12]
 
         # 合并环境变量
         proc_env = dict(os.environ)

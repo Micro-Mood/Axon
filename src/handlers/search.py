@@ -29,7 +29,7 @@ from ..core.errors import (
     WARNING_PARTIAL_RESULT,
     WARNING_SLOW_OPERATION,
 )
-from ..platform import is_hidden
+from ..platform import detect_file_encoding, is_hidden
 from .base import BaseHandler, RequestContext
 
 logger = logging.getLogger(__name__)
@@ -210,6 +210,11 @@ class SearchHandler(BaseHandler):
         flags = 0 if case_sensitive else re.IGNORECASE
         try:
             if is_regex:
+                if len(query) > _MAX_REGEX_LENGTH:
+                    raise InvalidParameterError(
+                        f"正则表达式过长: {len(query)} 字符（上限 {_MAX_REGEX_LENGTH}）",
+                        details={"length": len(query), "limit": _MAX_REGEX_LENGTH},
+                    )
                 compiled = re.compile(query, flags)
             else:
                 compiled = re.compile(re.escape(query), flags)
@@ -237,9 +242,14 @@ class SearchHandler(BaseHandler):
 
             total_files += 1
 
-            # 读取文件内容
+            # 单文件时间预算
+            file_start = time.monotonic()
+
+            # 读取文件内容 — 自动检测编码
             try:
-                content = item.read_text(encoding="utf-8", errors="replace")
+                head = item.read_bytes()[:8192]
+                file_enc = detect_file_encoding(head)
+                content = item.read_text(encoding=file_enc, errors="replace")
             except (OSError, PermissionError):
                 continue
 
@@ -262,6 +272,10 @@ class SearchHandler(BaseHandler):
                         "context": context,
                     })
                     total_hits += 1
+
+                # 单文件超时保护
+                if time.monotonic() - file_start > _PER_FILE_TIMEOUT_S:
+                    break
 
             if hits:
                 files_with_hits += 1
@@ -350,7 +364,12 @@ class SearchHandler(BaseHandler):
         else:
             types_to_search = _SYMBOL_PATTERNS
 
-        # 编译符号名匹配
+        # 编译符号名匹配（限制长度防 ReDoS）
+        if len(symbol) > _MAX_REGEX_LENGTH:
+            raise InvalidParameterError(
+                f"符号名过长: {len(symbol)} 字符（上限 {_MAX_REGEX_LENGTH}）",
+                details={"length": len(symbol), "limit": _MAX_REGEX_LENGTH},
+            )
         try:
             symbol_re = re.compile(symbol, re.IGNORECASE)
         except re.error:
@@ -370,7 +389,9 @@ class SearchHandler(BaseHandler):
                 continue
 
             try:
-                content = item.read_text(encoding="utf-8", errors="replace")
+                head = item.read_bytes()[:8192]
+                file_enc = detect_file_encoding(head)
+                content = item.read_text(encoding=file_enc, errors="replace")
             except (OSError, PermissionError):
                 continue
 

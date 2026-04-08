@@ -201,6 +201,11 @@ class MaxConcurrentTasksError(RequestError):
     http_status = 429
 
 
+class RateLimitError(RequestError):
+    error_code = "RATE_LIMIT_EXCEEDED"
+    http_status = 429
+
+
 # ═══════════════════════════════════════════════════════
 #  ServerError (5xx) — 服务端问题
 # ═══════════════════════════════════════════════════════
