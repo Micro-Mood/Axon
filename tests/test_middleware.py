@@ -1,8 +1,9 @@
 """Layer 5: Middleware 层完整测试"""
 import asyncio
+import os
 import sys
 import time
-sys.path.insert(0, ".")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 passed = 0
 failed = 0

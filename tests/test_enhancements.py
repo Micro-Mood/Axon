@@ -6,9 +6,10 @@
 4. middleware/concurrency.py — ConcurrencyMiddleware (文件锁 + 任务控制)
 """
 import asyncio
+import os
 import sys
 import time
-sys.path.insert(0, ".")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 passed = 0
 failed = 0
