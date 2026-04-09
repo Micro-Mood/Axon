@@ -28,6 +28,10 @@ from .errors import (
     SymlinkError,
 )
 
+# ═══════════════════════════════════════════════════════
+#  常量
+# ═══════════════════════════════════════════════════════
+
 # 危险环境变量 — 设置这些可以劫持进程行为
 _DANGEROUS_ENV_KEYS = frozenset({
     # Unix: 动态链接劫持
@@ -44,6 +48,86 @@ _DANGEROUS_ENV_KEYS = frozenset({
     # Shell 配置
     "ENV", "BASH_ENV", "CDPATH", "IFS",
 })
+
+# ── 危险命令模式 ──
+# 分类组织，每条正则对应一个具体攻击向量。
+# 预编译，匹配时 O(1) 查找。
+#
+# 类型标签用于日志和错误信息，便于排查被拦截的原因。
+
+_DangerousPattern = tuple[str, re.Pattern[str]]  # (label, compiled_regex)
+
+
+def _compile_patterns(patterns: list[tuple[str, str]]) -> list[_DangerousPattern]:
+    """预编译危险模式列表"""
+    return [(label, re.compile(regex, re.IGNORECASE)) for label, regex in patterns]
+
+
+_DANGEROUS_PATTERNS: list[_DangerousPattern] = _compile_patterns([
+    # ── 命令链接到危险命令 ──
+    ("chain_to_destructive",   r'&&\s*(?:del|rd|rmdir|format|diskpart|rm|dd|mkfs)'),
+    ("pipe_to_destructive",    r'\|\s*(?:del|rd|rm|dd|format)'),
+    ("semicolon_chain",        r';\s*(?:del|rd|rm|dd|format|mkfs)'),
+
+    # ── 设备/空设备重定向 ──
+    ("device_redirect",        r'>\s*(?:con|nul|prn|aux|com\d|lpt\d|/dev/)'),
+
+    # ── Shell 命令注入 ──
+    ("backtick_injection",     r'`[^`]+`'),
+    ("dollar_paren_injection", r'\$\([^)]+\)'),
+    ("dollar_brace_injection", r'\$\{[^}]+\}'),
+
+    # ── 递归删除 ──
+    ("win_del_recursive",      r'\bdel\s+/[sfq]'),
+    ("win_rd_recursive",       r'\brd\s+/[sq]'),
+    ("unix_rm_recursive",      r'\brm\s+-[rf]+'),
+    ("unix_rm_no_preserve",    r'\brm\s+--no-preserve-root'),
+
+    # ── 磁盘/分区操作 ──
+    ("win_format_drive",       r'\bformat\s+[a-z]:'),
+    ("win_diskpart",           r'\bdiskpart'),
+    ("unix_dd_write",          r'\bdd\s+.*of='),
+    ("unix_mkfs",              r'\bmkfs\.'),
+
+    # ── 网络攻击向量 ──
+    ("netcat_listen",          r'\bnc\s+-[el]'),
+    ("curl_pipe_exec",         r'\bcurl\s+.*\|\s*(?:bash|sh|powershell)'),
+    ("wget_pipe_exec",         r'\bwget\s+.*\|\s*(?:bash|sh)'),
+
+    # ── PowerShell 危险操作 ──
+    ("ps_invoke_expression",   r'invoke-expression'),
+    ("ps_iex",                 r'\biex\s*\('),
+    ("ps_encoded_command",     r'-encodedcommand'),
+    ("ps_downloadstring",      r'downloadstring'),
+    ("ps_bypass_policy",       r'-(?:ep|executionpolicy)\s+bypass'),
+    ("ps_hidden_window",       r'-(?:w|windowstyle)\s+hidden'),
+
+    # ── Windows 注册表 ──
+    ("reg_delete",             r'\breg\s+delete'),
+    ("reg_add_force",          r'\breg\s+add\s+.*\/f'),
+
+    # ── 系统级危险命令 ──
+    ("win_bcdedit",            r'\bbcdedit\b'),
+    ("win_shutdown",           r'\bshutdown\b'),
+    ("win_taskkill_force",     r'\btaskkill\s+/f'),
+    ("unix_chmod_suid",        r'\bchmod\s+[ugo]*\+s'),
+    ("unix_chown_root",        r'\bchown\s+root'),
+
+    # ── 用户/权限操作 ──
+    ("win_net_user",           r'\bnet\s+user\b'),
+    ("win_net_localgroup",     r'\bnet\s+localgroup\b'),
+    ("win_runas",              r'\brunas\b'),
+    ("unix_sudo_su",           r'\bsudo\s+su\b'),
+    ("unix_passwd",            r'\bpasswd\b'),
+
+    # ── 反弹 shell ──
+    ("reverse_shell_bash",     r'\bbash\s+-i\s+>'),
+    ("reverse_shell_devtcp",   r'/dev/tcp/'),
+    ("reverse_shell_python",   r'python.*\bsocket\b.*\bconnect\b'),
+
+    # ── 环境变量展开（Windows cmd.exe 注入向量） ──
+    ("win_env_expansion",      r'%[a-zA-Z_][a-zA-Z0-9_]*%'),
+])
 
 
 class SecurityChecker:
@@ -163,18 +247,19 @@ class SecurityChecker:
         """
         校验命令安全性
 
-        检查顺序:
+        三层检查:
         1. Shell 语法检查（引号闭合、转义完整性）
-        2. 黑名单命令匹配
+        2. 黑名单命令匹配（配置文件 blocked_commands）
+        3. 危险模式扫描（预编译正则，覆盖注入/提权/磁盘操作等 40+ 种向量）
 
         Raises:
             InvalidParameterError: shell 语法错误
-            BlockedCommandError: 命令在黑名单中
+            BlockedCommandError: 命令在黑名单中或匹配危险模式
         """
-        # 语法预检: 引号闭合、反斜杠转义
+        # ── 1. 语法预检 ──
         self._check_shell_syntax(command)
 
-        # 黑名单匹配
+        # ── 2. 黑名单匹配 ──
         for i, pattern in enumerate(self._blocked_cmd_patterns):
             if pattern.search(command):
                 raise BlockedCommandError(
@@ -183,6 +268,19 @@ class SecurityChecker:
                         "command": command,
                         "blocked_by": self._config.blocked_commands[i],
                     },
+                )
+
+        # ── 3. 危险模式扫描 ──
+        command_lower = command.lower()
+        for label, pattern in _DANGEROUS_PATTERNS:
+            if pattern.search(command_lower):
+                raise BlockedCommandError(
+                    f"检测到危险命令模式: {command}",
+                    details={
+                        "command": command[:500],
+                        "pattern_label": label,
+                    },
+                    suggestion="该命令包含可能导致系统损坏或安全风险的操作",
                 )
 
     def validate_cwd(self, cwd: str, workspace: Path) -> Path:

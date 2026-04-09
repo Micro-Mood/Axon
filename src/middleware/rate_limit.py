@@ -3,7 +3,8 @@ Layer 5: Middleware — 限流中间件
 
 职责:
 - 限制请求速率，防止客户端过快调用导致资源耗尽
-- 滑动窗口算法（per-method 和 global 双层限流）
+- 三层限流: 全局 → 读写分类 → per-method（可选）
+- 滑动窗口算法
 - 写操作使用更严格的限流窗口
 - 超限抛 RateLimitError（429）
 
@@ -21,7 +22,6 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import defaultdict
 from typing import Any
 
 from ..core.errors import RateLimitError
@@ -173,10 +173,9 @@ class RateLimitMiddleware:
         self._global_counter = _SlidingWindowCounter(window_ms, global_rpm)
         self._read_counter = _SlidingWindowCounter(window_ms, read_rpm)
         self._write_counter = _SlidingWindowCounter(window_ms, write_rpm)
-        # per-method 计数器（按需创建）
-        self._method_counters: dict[str, _SlidingWindowCounter] = defaultdict(
-            lambda: _SlidingWindowCounter(window_ms, read_rpm)
-        )
+        # per-method 计数器（通过 set_method_limit 显式注册）
+        self._method_counters: dict[str, _SlidingWindowCounter] = {}
+        self._default_window_ms = window_ms
 
     async def __call__(
         self, ctx: RequestContext, next_handler: NextFunc
@@ -231,6 +230,26 @@ class RateLimitMiddleware:
                 suggestion="请降低请求频率后重试",
             )
 
+        # ── 3. Per-method 限流（仅对显式设置过限制的方法生效）──
+        if method in self._method_counters:
+            method_counter = self._method_counters[method]
+            if not method_counter.check_and_record():
+                logger.warning(
+                    "per-method 限流触发: method=%s request_id=%s",
+                    method,
+                    ctx.request_id,
+                )
+                raise RateLimitError(
+                    f"请求过于频繁（方法 '{method}' 限制: {method_counter.max_count} 次/"
+                    f"{method_counter.window_ms / 1000:.0f}s）",
+                    details={
+                        "method": method,
+                        "limit_type": "per_method",
+                        "max_rpm": method_counter.max_count,
+                    },
+                    suggestion="请降低请求频率后重试",
+                )
+
         return await next_handler(ctx)
 
     def set_method_limit(self, method: str, rpm: int) -> None:
@@ -242,7 +261,7 @@ class RateLimitMiddleware:
             rpm: 每分钟请求上限
         """
         self._method_counters[method] = _SlidingWindowCounter(
-            self._global_counter.window_ms, rpm
+            self._default_window_ms, rpm
         )
 
     def reset(self) -> None:

@@ -124,6 +124,24 @@ def test_chain_repr():
     assert len(chain) == 2
 test("repr 和 len", test_chain_repr)
 
+def test_chain_clear():
+    chain = MiddlewareChain()
+    chain.use(AddHeaderMiddleware())
+    chain.use(MultiplyMiddleware())
+    assert len(chain) == 2
+    chain.clear()
+    assert len(chain) == 0
+    assert chain.middlewares == []
+test("chain.clear", test_chain_clear)
+
+async def test_chain_use_returns_self():
+    """use() 支持链式调用"""
+    chain = MiddlewareChain()
+    result = chain.use(AddHeaderMiddleware()).use(MultiplyMiddleware())
+    assert result is chain
+    assert len(chain) == 2
+test("use() 链式调用", test_chain_use_returns_self)
+
 
 # ═══════════════════════════════════════════
 #  validation.py 测试
@@ -272,6 +290,48 @@ def test_get_method_schema():
     assert get_method_schema("nonexistent") is None
 test("get_method_schema", test_get_method_schema)
 
+async def test_validation_max_value():
+    v = ValidationMiddleware()
+    ctx = RequestContext(method="search_content", params={
+        "query": "test",
+        "context_lines": 100,  # max=50
+    })
+    try:
+        await v(ctx, dummy_handler)
+        assert False
+    except InvalidParameterError as e:
+        assert "context_lines" in e.message
+        assert "过大" in e.message
+test("数值范围上限", test_validation_max_value)
+
+async def test_validation_float_coerce():
+    """float 类型强转: str→float, int→float"""
+    from src.middleware.validation import _coerce_value
+    # str → float
+    assert _coerce_value("1.5", "float", "x") == 1.5
+    # int → float
+    assert _coerce_value(3, "float", "x") == 3.0
+    assert isinstance(_coerce_value(3, "float", "x"), float)
+    # float 直传
+    assert _coerce_value(2.7, "float", "x") == 2.7
+    # 非法值
+    try:
+        _coerce_value("abc", "float", "x")
+        assert False
+    except InvalidParameterError:
+        pass
+    # float|None 接受 None
+    assert _coerce_value(None, "float|None", "x") is None
+test("float 类型强转", test_validation_float_coerce)
+
+async def test_validation_strict_allows_known():
+    """严格模式: 只传已知参数应通过"""
+    v = ValidationMiddleware(strict=True)
+    ctx = RequestContext(method="read_file", params={"path": "/test/f.txt"})
+    result = await v(ctx, dummy_handler)
+    assert result["status"] == "ok"
+test("严格模式允许已知参数", test_validation_strict_allows_known)
+
 
 # ═══════════════════════════════════════════
 #  audit.py 测试
@@ -312,7 +372,48 @@ async def test_audit_error_propagation():
         assert False
     except InvalidParameterError:
         pass  # 异常应上浮
-test("审计: 异常不吞没", test_audit_error_propagation)
+test("审计: MCPError 不吞没", test_audit_error_propagation)
+
+async def test_audit_generic_exception():
+    """非 MCPError 异常也应上浮、不吞没"""
+    audit = AuditMiddleware()
+    async def crash_handler(ctx):
+        raise RuntimeError("unexpected")
+    ctx = RequestContext(method="test", params={})
+    try:
+        await audit(ctx, crash_handler)
+        assert False
+    except RuntimeError as e:
+        assert "unexpected" in str(e)
+test("审计: 非MCPError不吞没", test_audit_generic_exception)
+
+async def test_audit_slow_on_error():
+    """失败请求超过阈值也应追加慢操作警告"""
+    audit = AuditMiddleware(slow_threshold_ms=1)
+    async def slow_error_handler(ctx):
+        import asyncio
+        await asyncio.sleep(0.01)
+        raise InvalidParameterError("slow fail")
+    ctx = RequestContext(method="test", params={})
+    try:
+        await audit(ctx, slow_error_handler)
+    except InvalidParameterError:
+        pass
+    slow = [w for w in ctx.warnings if w.code == "SLOW_OPERATION"]
+    assert len(slow) == 1
+test("审计: 失败+慢操作也有警告", test_audit_slow_on_error)
+
+def test_safe_params():
+    from src.middleware.audit import _safe_params
+    # env 应被脱敏
+    result = _safe_params({"command": "ls", "env": {"SECRET": "123"}})
+    assert result["env"] == "<redacted>"
+    assert result["command"] == "ls"
+    # 长字符串应被截断
+    result2 = _safe_params({"content": "x" * 200}, max_value_len=50)
+    assert len(result2["content"]) < 200
+    assert "..." in result2["content"]
+test("_safe_params 脱敏+截断", test_safe_params)
 
 
 # ═══════════════════════════════════════════
@@ -362,6 +463,47 @@ async def test_rate_limit_reset():
     ctx2 = RequestContext(method="read_file", params={})
     await rl(ctx2, dummy_handler)
 test("限流: reset 重置", test_rate_limit_reset)
+
+async def test_rate_limit_per_method():
+    """per-method 限流: set_method_limit 应对特定方法生效"""
+    rl = RateLimitMiddleware(global_rpm=1000, read_rpm=1000, write_rpm=1000)
+    rl.set_method_limit("read_file", 2)
+
+    # 前2次 read_file 通过
+    for _ in range(2):
+        ctx = RequestContext(method="read_file", params={})
+        await rl(ctx, dummy_handler)
+
+    # 第3次 read_file 被 per-method 限流
+    ctx = RequestContext(method="read_file", params={})
+    try:
+        await rl(ctx, dummy_handler)
+        assert False, "应被 per-method 限流"
+    except RateLimitError as e:
+        assert "per_method" in str(e.details.get("limit_type", ""))
+
+    # 其他方法不受影响
+    ctx2 = RequestContext(method="stat_path", params={})
+    await rl(ctx2, dummy_handler)
+test("限流: per-method 限流", test_rate_limit_per_method)
+
+async def test_rate_limit_write_vs_read():
+    """写操作使用独立的更严格的限制"""
+    rl = RateLimitMiddleware(global_rpm=1000, read_rpm=1000, write_rpm=1)
+    # 第一次写操作通过
+    ctx = RequestContext(method="create_file", params={})
+    await rl(ctx, dummy_handler)
+    # 第二次写操作被限流
+    ctx2 = RequestContext(method="write_file", params={})
+    try:
+        await rl(ctx2, dummy_handler)
+        assert False, "应被写限流"
+    except RateLimitError as e:
+        assert e.details["limit_type"] == "write"
+    # 读操作仍然通过
+    ctx3 = RequestContext(method="read_file", params={})
+    await rl(ctx3, dummy_handler)
+test("限流: 写/读独立窗口", test_rate_limit_write_vs_read)
 
 
 # ═══════════════════════════════════════════
@@ -439,6 +581,50 @@ async def test_security_validates_env():
     except InvalidParameterError:
         pass
 test("安全: env校验", test_security_validates_env)
+
+async def test_security_validates_cwd():
+    """cwd 校验: workspace 内通过，外部拒绝"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = MCPConfig(workspace={"root_path": tmpdir})
+        sec = SecurityChecker(config.security)
+        mw = SecurityMiddleware(config, sec)
+
+        # 有效 cwd (workspace 内)
+        ctx = RequestContext(method="run_command", params={
+            "command": "echo hi", "cwd": tmpdir
+        })
+        await mw(ctx, dummy_handler)
+        assert "cwd" in ctx.validated_paths
+
+        # 无效 cwd (workspace 外)
+        ctx2 = RequestContext(method="run_command", params={
+            "command": "echo hi", "cwd": tempfile.gettempdir()
+        })
+        try:
+            await mw(ctx2, dummy_handler)
+            assert False
+        except (PathOutsideWorkspaceError, InvalidParameterError):
+            pass
+test("安全: cwd校验", test_security_validates_cwd)
+
+async def test_security_write_permission():
+    """写操作应检查目标路径的写权限"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = MCPConfig(workspace={"root_path": tmpdir})
+        sec = SecurityChecker(config.security)
+        mw = SecurityMiddleware(config, sec)
+
+        test_file = Path(tmpdir) / "test.txt"
+        test_file.write_text("hi")
+
+        # write_file 是写操作，应检查 path 的写权限
+        ctx = RequestContext(method="write_file", params={
+            "path": str(test_file), "content": "new"
+        })
+        # 文件存在且可写 → 应该通过
+        await mw(ctx, dummy_handler)
+        assert "path" in ctx.validated_paths
+test("安全: 写权限检查", test_security_write_permission)
 
 
 # ═══════════════════════════════════════════

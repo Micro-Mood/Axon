@@ -34,7 +34,8 @@ logger = logging.getLogger(__name__)
 # ── 参数分类 ──
 
 # 需要做路径校验的参数名
-_PATH_PARAMS = frozenset({"path", "source", "destination", "dest", "root_dir", "root"})
+# 注意: set_workspace 的 root_path 不在此处 — 它切换 workspace，不受当前 workspace 约束
+_PATH_PARAMS = frozenset({"path", "source", "dest", "root"})
 
 # 需要做命令校验的参数名
 _COMMAND_PARAMS = frozenset({"command"})
@@ -62,7 +63,7 @@ _WRITE_METHODS = frozenset({
 })
 
 # 写操作中的 "目标路径" 参数名（需要检查写权限的）
-_WRITE_TARGET_PARAMS = frozenset({"path", "destination", "dest"})
+_WRITE_TARGET_PARAMS = frozenset({"path", "dest"})
 
 # 源路径参数名（写操作中用于读的）
 _SOURCE_PARAMS = frozenset({"source"})

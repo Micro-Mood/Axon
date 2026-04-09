@@ -34,11 +34,13 @@ logger = logging.getLogger(__name__)
 # 类型映射
 STR = "str"
 INT = "int"
+FLOAT = "float"
 BOOL = "bool"
 DICT = "dict"
 LIST = "list"
 STR_OR_NONE = "str|None"
 INT_OR_NONE = "int|None"
+FLOAT_OR_NONE = "float|None"
 BOOL_OR_NONE = "bool|None"
 DICT_OR_NONE = "dict|None"
 LIST_OR_NONE = "list|None"
@@ -320,6 +322,22 @@ def _coerce_value(value: Any, target_type: str, param_name: str) -> Any:
         raise InvalidParameterError(
             f"参数 '{param_name}' 类型错误: 期望 int，得到 {type(value).__name__}={value!r}",
             details={"param": param_name, "expected_type": "int", "actual_type": type(value).__name__},
+        )
+
+    # float 类型
+    if base_type == "float":
+        if isinstance(value, float):
+            return value
+        if isinstance(value, int) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                pass
+        raise InvalidParameterError(
+            f"参数 '{param_name}' 类型错误: 期望 float，得到 {type(value).__name__}={value!r}",
+            details={"param": param_name, "expected_type": "float", "actual_type": type(value).__name__},
         )
 
     # bool 类型

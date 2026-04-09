@@ -1,7 +1,7 @@
 """
 Layer 1: Core — 基础设施层
 
-提供: 配置、错误、安全校验、缓存
+提供: 配置、错误、安全校验、缓存、资源追踪、文件锁
 无业务逻辑，其他所有层均可依赖此层
 """
 
@@ -40,6 +40,8 @@ from .errors import (
     TimeoutError,
     Warning,
 )
+from .filelock import AsyncFileLockManager
+from .resource import ResourceTracker
 from .security import SecurityChecker
 
 __all__ = [
@@ -79,4 +81,8 @@ __all__ = [
     "SecurityChecker",
     # Cache
     "CacheManager",
+    # Resource
+    "ResourceTracker",
+    # FileLock
+    "AsyncFileLockManager",
 ]

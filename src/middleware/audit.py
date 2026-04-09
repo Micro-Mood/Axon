@@ -31,6 +31,9 @@ from .chain import NextFunc
 
 logger = logging.getLogger(__name__)
 
+# 日志中需要脱敏的参数名
+_SENSITIVE_PARAM_KEYS = frozenset({"env"})
+
 
 class AuditMiddleware:
     """
@@ -142,10 +145,9 @@ def _safe_params(params: dict[str, Any], max_value_len: int = 100) -> dict[str, 
     - 截断过长的值（content/patch 等大文本）
     - 不记录可能的敏感字段（env）
     """
-    _SENSITIVE_KEYS = frozenset({"env"})
     safe = {}
     for key, value in params.items():
-        if key in _SENSITIVE_KEYS:
+        if key in _SENSITIVE_PARAM_KEYS:
             safe[key] = "<redacted>"
         elif isinstance(value, str) and len(value) > max_value_len:
             safe[key] = value[:max_value_len] + f"...(+{len(value) - max_value_len})"
