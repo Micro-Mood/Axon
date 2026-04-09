@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 # 写操作方法名 — 使用更严格的限流
+# 默认硬编码，可通过构造函数注入 tools 自动派生
 _WRITE_METHODS = frozenset({
     "create_file",
     "write_file",
@@ -160,6 +161,7 @@ class RateLimitMiddleware:
         write_rpm: int = 60,
         window_ms: float = 60_000.0,
         enabled: bool = True,
+        tools: dict | None = None,
     ) -> None:
         """
         Args:
@@ -168,6 +170,7 @@ class RateLimitMiddleware:
             write_rpm: 写操作每分钟上限
             window_ms: 滑动窗口大小（毫秒），默认 60 秒
             enabled: 是否启用限流（False 则透传所有请求）
+            tools: {name: ToolDef} 字典，传入后自动派生写方法集
         """
         self._enabled = enabled
         self._global_counter = _SlidingWindowCounter(window_ms, global_rpm)
@@ -176,6 +179,13 @@ class RateLimitMiddleware:
         # per-method 计数器（通过 set_method_limit 显式注册）
         self._method_counters: dict[str, _SlidingWindowCounter] = {}
         self._default_window_ms = window_ms
+        # 从 tools 派生写方法集，未传则回退到内置默认
+        if tools is not None:
+            self._write_methods = frozenset(
+                t.name for t in tools.values() if t.is_write
+            )
+        else:
+            self._write_methods = _WRITE_METHODS
 
     async def __call__(
         self, ctx: RequestContext, next_handler: NextFunc
@@ -184,7 +194,7 @@ class RateLimitMiddleware:
             return await next_handler(ctx)
 
         method = ctx.method
-        is_write = method in _WRITE_METHODS
+        is_write = method in self._write_methods
 
         # ── 1. 全局限流 ──
         if not self._global_counter.check_and_record():

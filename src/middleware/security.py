@@ -47,6 +47,7 @@ _ENV_PARAMS = frozenset({"env"})
 _CWD_PARAMS = frozenset({"cwd"})
 
 # 写操作方法名 — 需要额外检查写权限
+# 默认硬编码，可通过构造函数注入 tools 自动派生
 _WRITE_METHODS = frozenset({
     "create_file",
     "write_file",
@@ -87,9 +88,16 @@ class SecurityMiddleware:
     任何校验失败都会抛对应的 MCPError（不调用 next）。
     """
 
-    def __init__(self, config: MCPConfig, security: SecurityChecker) -> None:
+    def __init__(self, config: MCPConfig, security: SecurityChecker, *, tools: dict | None = None) -> None:
         self._config = config
         self._security = security
+        # 从 tools 派生写方法集，未传则回退到内置默认
+        if tools is not None:
+            self._write_methods = frozenset(
+                t.name for t in tools.values() if t.is_write
+            )
+        else:
+            self._write_methods = _WRITE_METHODS
 
     async def __call__(
         self, ctx: RequestContext, next_handler: NextFunc
@@ -119,7 +127,7 @@ class SecurityMiddleware:
             )
 
         # ── 写权限检查 ──
-        if ctx.method in _WRITE_METHODS:
+        if ctx.method in self._write_methods:
             # 目标路径需要写权限
             for param_name in _WRITE_TARGET_PARAMS:
                 validated_path = ctx.validated_paths.get(param_name)

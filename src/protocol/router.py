@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 # Router 包装后的统一签名
 HandlerFunc = Callable[[RequestContext], Awaitable[dict[str, Any]]]
 
+# 路径参数名约定（与 security middleware 对齐）
+_PATH_PARAM_NAMES = frozenset({"path", "source", "dest", "root"})
+
 
 class MethodRouter:
     """
@@ -114,6 +117,40 @@ class MethodRouter:
             包装后的 handler 函数，或 None 表示未注册
         """
         return self._routes.get(method_name)
+
+    def register_tool(self, tool_def: Any, handler: Any) -> None:
+        """
+        注册来自 tools/ 插件系统的工具
+
+        与 register() 的区别:
+        - 参数提取使用 ToolDef.params 而非 inspect.signature
+        - Path 转换使用命名约定而非类型注解
+        - execute 函数签名: execute(handler, ctx, **kwargs)
+
+        Args:
+            tool_def: ToolDef 实例（含 name, params, execute）
+            handler: handler 实例（如 FileHandler）
+        """
+        method_name = tool_def.name
+        execute_fn = tool_def.execute
+        param_names = [p.name for p in tool_def.params]
+        path_params = frozenset(n for n in param_names if n in _PATH_PARAM_NAMES)
+
+        async def wrapped(ctx: RequestContext) -> dict[str, Any]:
+            kwargs: dict[str, Any] = {}
+            for name in param_names:
+                if name in ctx.params:
+                    value = ctx.params[name]
+                    if name in path_params and isinstance(value, str):
+                        value = Path(value)
+                    kwargs[name] = value
+            return await execute_fn(handler, ctx, **kwargs)
+
+        if method_name in self._routes:
+            logger.warning("方法 %s 被重复注册，覆盖", method_name)
+
+        self._raw_methods[method_name] = execute_fn
+        self._routes[method_name] = wrapped
 
     @property
     def methods(self) -> list[str]:

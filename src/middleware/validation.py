@@ -10,6 +10,10 @@ Layer 5: Middleware — 参数校验中间件
 
 校验失败统一抛 InvalidParameterError，不调用 next。
 
+参数 schema 来源:
+- 优先使用 tools 插件系统的 ToolDef.params（由 build_default_chain 注入）
+- 备选使用内置 _METHOD_SCHEMAS（向后兼容）
+
 依赖:
 - Layer 1: core (InvalidParameterError)
 - Layer 4: handlers/base (RequestContext)
@@ -418,18 +422,27 @@ class ValidationMiddleware:
     对未注册的方法（schema 中没有的），透传不校验。
     """
 
-    def __init__(self, strict: bool = False) -> None:
+    def __init__(self, strict: bool = False, tools: dict | None = None) -> None:
         """
         Args:
             strict: 严格模式下，如果请求参数中包含 schema 中未定义的字段，
                     会抛 InvalidParameterError。默认 False（忽略未知参数）。
+            tools: {name: ToolDef} 字典。传入后使用 ToolDef.params 作为 schema，
+                   不传则回退到内置 _METHOD_SCHEMAS（向后兼容）。
         """
         self._strict = strict
+        # 构建 schema: {method_name: list[param-like]}
+        if tools is not None:
+            self._schemas: dict[str, list] = {
+                name: t.params for name, t in tools.items()
+            }
+        else:
+            self._schemas = _METHOD_SCHEMAS
 
     async def __call__(
         self, ctx: RequestContext, next_handler: NextFunc
     ) -> dict[str, Any]:
-        schema = _METHOD_SCHEMAS.get(ctx.method)
+        schema = self._schemas.get(ctx.method)
         if schema is None:
             # 未注册的方法 — 可能是系统内部方法，透传
             logger.debug("方法 '%s' 无参数 schema，跳过校验", ctx.method)
@@ -518,10 +531,10 @@ class ValidationMiddleware:
 
 
 def get_method_schema(method: str) -> list[_Param] | None:
-    """查询指定方法的参数 schema（供外部使用，如自动生成文档）"""
+    """查询指定方法的参数 schema（从内置 _METHOD_SCHEMAS 查找，供外部使用）"""
     return _METHOD_SCHEMAS.get(method)
 
 
 def get_registered_methods() -> list[str]:
-    """返回所有已注册 schema 的方法名"""
+    """返回内置 schema 中所有已注册的方法名"""
     return sorted(_METHOD_SCHEMAS.keys())

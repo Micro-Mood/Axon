@@ -37,6 +37,7 @@ from ..handlers.system import SystemHandler
 from ..middleware import build_default_chain
 from ..middleware.chain import MiddlewareChain
 from ..stream import StreamManager
+from ..tools import discover_all
 from .jsonrpc import (
     JsonRpcError,
     JsonRpcRequest,
@@ -111,6 +112,7 @@ class MCPServer:
 
         # ── Layer 6: Router ──
         self._router = MethodRouter()
+        self._tools = discover_all()
         self._register_methods()
 
         # ── Layer 5: Middleware Chain ──
@@ -119,6 +121,7 @@ class MCPServer:
             self._security,
             file_lock_manager=self._file_lock_manager,
             resource_tracker=self._resource_tracker,
+            tools=self._tools,
         )
 
         # 注入方法列表到 SystemHandler
@@ -129,61 +132,23 @@ class MCPServer:
     # ═══════════════════════════════════════════════════
 
     def _register_methods(self) -> None:
-        """将所有 handler 方法注册到路由器"""
+        """将所有 tool 注册到路由器（自动扫描 tools/ 目录）"""
 
-        # ── File 操作 (16) ──
-        self._router.register_handler(self._file_handler, {
-            "read_file":         "read_file",
-            "stat_path":         "stat_path",
-            "exists":            "exists",
-            "list_directory":    "list_directory",
-            "create_file":       "create_file",
-            "write_file":        "write_file",
-            "create_directory":  "create_directory",
-            "replace_range":     "replace_range",
-            "insert_text":       "insert_text",
-            "delete_range":      "delete_range",
-            "apply_patch":       "apply_patch",
-            "move_file":         "move_file",
-            "copy_file":         "copy_file",
-            "delete_file":       "delete_file",
-            "move_directory":    "move_directory",
-            "delete_directory":  "delete_directory",
-        })
+        handler_map = {
+            "file": self._file_handler,
+            "search": self._search_handler,
+            "command": self._command_handler,
+            "system": self._system_handler,
+        }
 
-        # ── Search 操作 (3) ──
-        self._router.register_handler(self._search_handler, {
-            "find_files":   "find_files",
-            "find_content": "find_content",
-            "find_symbol":  "find_symbol",
-        })
+        for name, tool_def in self._tools.items():
+            handler = handler_map.get(tool_def.group)
+            if handler is None:
+                logger.warning("tool %s 的 group '%s' 无对应 handler，跳过", name, tool_def.group)
+                continue
+            self._router.register_tool(tool_def, handler)
 
-        # ── Command 操作 (10) ──
-        self._router.register_handler(self._command_handler, {
-            "run_command":   "run",
-            "create_task":   "spawn",
-            "stop_task":     "stop",
-            "kill_task":     "kill",
-            "task_status":   "status",
-            "wait_task":     "wait",
-            "list_tasks":    "list_tasks",
-            "read_stdout":   "read_stdout",
-            "read_stderr":   "read_stderr",
-            "write_stdin":   "write_stdin",
-        })
-
-        # ── System 操作 (7) ──
-        self._router.register_handler(self._system_handler, {
-            "ping":          "ping",
-            "get_version":   "get_version",
-            "get_methods":   "get_methods",
-            "get_config":    "get_config",
-            "set_workspace": "set_workspace",
-            "get_stats":     "get_stats",
-            "clear_cache":   "clear_cache",
-        })
-
-        logger.info("已注册 %d 个方法", self._router.method_count)
+        logger.info("已注册 %d 个方法（来自 tools/ 自动扫描）", self._router.method_count)
 
     # ═══════════════════════════════════════════════════
     #  请求处理

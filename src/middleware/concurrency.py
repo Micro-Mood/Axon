@@ -7,6 +7,10 @@ Layer 5: Middleware — 并发控制中间件
 - 任务创建自动注册到 ResourceTracker 并发控制
 - 任务完成后自动注销
 
+方法分类来源:
+- 优先使用 tools 插件系统的 ToolDef.lock / ToolDef.track 元数据
+- 备选使用内置默认集合（向后兼容）
+
 架构位置:
     Security → Validation → RateLimit → **Concurrency** → [Handler] → Audit
     在限流之后、handler 之前，保证进入 handler 的请求不会并发冲突。
@@ -29,7 +33,7 @@ from .chain import NextFunc
 logger = logging.getLogger(__name__)
 
 
-# ── 方法分类 ──
+# ── 方法分类（内置默认，可被 tools 覆盖）──
 
 # 文件写操作 — 需要对目标路径加排他锁
 _FILE_WRITE_METHODS = frozenset({
@@ -77,6 +81,41 @@ _TASK_END_METHODS = frozenset({
 _ALL_WRITE_METHODS = _FILE_WRITE_METHODS | _FILE_MOVE_METHODS | _DIR_WRITE_METHODS
 
 
+def _build_method_sets(tools: dict) -> dict[str, frozenset[str]]:
+    """从 tools 插件系统的 ToolDef 元数据派生方法分类集合"""
+    file_write = set()
+    file_move = set()
+    dir_write = set()
+    file_read = set()
+    task_create = set()
+    task_end = set()
+
+    for t in tools.values():
+        if t.lock == "write":
+            file_write.add(t.name)
+        elif t.lock == "write_dual":
+            file_move.add(t.name)
+        elif t.lock == "dir_write":
+            dir_write.add(t.name)
+        elif t.lock == "read":
+            file_read.add(t.name)
+
+        if t.track == "task_create":
+            task_create.add(t.name)
+        elif t.track == "task_end":
+            task_end.add(t.name)
+
+    return {
+        "file_write": frozenset(file_write),
+        "file_move": frozenset(file_move),
+        "dir_write": frozenset(dir_write),
+        "file_read": frozenset(file_read),
+        "task_create": frozenset(task_create),
+        "task_end": frozenset(task_end),
+        "all_write": frozenset(file_write | file_move | dir_write),
+    }
+
+
 class ConcurrencyMiddleware:
     """
     并发控制中间件
@@ -100,14 +139,35 @@ class ConcurrencyMiddleware:
         self,
         file_lock_manager: AsyncFileLockManager | None = None,
         resource_tracker: ResourceTracker | None = None,
+        tools: dict | None = None,
     ) -> None:
         """
         Args:
             file_lock_manager: 文件锁管理器。None 则不启用文件锁。
             resource_tracker: 资源追踪器。None 则不启用任务并发控制。
+            tools: {name: ToolDef} 字典，传入后自动派生方法分类。
         """
         self._file_locks = file_lock_manager
         self._resource_tracker = resource_tracker
+
+        # 从 tools 派生方法分类，未传则回退到内置默认
+        if tools is not None:
+            sets = _build_method_sets(tools)
+            self._file_write = sets["file_write"]
+            self._file_move = sets["file_move"]
+            self._dir_write = sets["dir_write"]
+            self._file_read = sets["file_read"]
+            self._task_create = sets["task_create"]
+            self._task_end = sets["task_end"]
+            self._all_write = sets["all_write"]
+        else:
+            self._file_write = _FILE_WRITE_METHODS
+            self._file_move = _FILE_MOVE_METHODS
+            self._dir_write = _DIR_WRITE_METHODS
+            self._file_read = _FILE_READ_METHODS
+            self._task_create = _TASK_CREATE_METHODS
+            self._task_end = _TASK_END_METHODS
+            self._all_write = _ALL_WRITE_METHODS
 
     async def __call__(
         self, ctx: RequestContext, next_handler: NextFunc
@@ -115,19 +175,19 @@ class ConcurrencyMiddleware:
         method = ctx.method
 
         # ── 文件排他锁 ──
-        if self._file_locks is not None and method in _ALL_WRITE_METHODS:
+        if self._file_locks is not None and method in self._all_write:
             return await self._with_write_lock(ctx, next_handler)
 
         # ── 文件共享锁 ──
-        if self._file_locks is not None and method in _FILE_READ_METHODS:
+        if self._file_locks is not None and method in self._file_read:
             return await self._with_read_lock(ctx, next_handler)
 
         # ── 任务并发控制 ──
-        if self._resource_tracker is not None and method in _TASK_CREATE_METHODS:
+        if self._resource_tracker is not None and method in self._task_create:
             return await self._with_task_tracking(ctx, next_handler)
 
         # ── 任务结束 → 注销 ──
-        if self._resource_tracker is not None and method in _TASK_END_METHODS:
+        if self._resource_tracker is not None and method in self._task_end:
             return await self._with_task_unregister(ctx, next_handler)
 
         # 其他方法直接透传
@@ -141,7 +201,7 @@ class ConcurrencyMiddleware:
         method = ctx.method
         params = ctx.params
 
-        if method in _FILE_MOVE_METHODS:
+        if method in self._file_move:
             # 移动/复制: 对 source 和 dest 都加排他锁
             # 按路径排序加锁，避免死锁（A 锁 src→dst，B 锁 dst→src）
             source = params.get("source", "")

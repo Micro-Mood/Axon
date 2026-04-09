@@ -39,6 +39,7 @@ def build_default_chain(
     *,
     file_lock_manager: AsyncFileLockManager | None = None,
     resource_tracker: ResourceTracker | None = None,
+    tools: dict | None = None,
     rate_limit_enabled: bool = True,
     strict_validation: bool = False,
     slow_threshold_ms: float = 5000.0,
@@ -57,6 +58,8 @@ def build_default_chain(
         security: 安全校验器实例
         file_lock_manager: 文件锁管理器（None 则不启用文件锁）
         resource_tracker: 资源追踪器（None 则不启用任务并发控制）
+        tools: {name: ToolDef} 字典，传入后各中间件自动从 ToolDef 元数据
+               派生方法分类（写操作集、锁类型集等），不再依赖内置硬编码。
         rate_limit_enabled: 是否启用限流
         strict_validation: 严格参数校验模式（拒绝未知参数）
         slow_threshold_ms: 慢操作警告阈值
@@ -71,10 +74,10 @@ def build_default_chain(
     chain = MiddlewareChain()
 
     # 1. 安全校验 — 最外层，第一个拦截请求
-    chain.use(SecurityMiddleware(config, security))
+    chain.use(SecurityMiddleware(config, security, tools=tools))
 
     # 2. 参数校验 — 安全通过后，校验参数格式
-    chain.use(ValidationMiddleware(strict=strict_validation))
+    chain.use(ValidationMiddleware(strict=strict_validation, tools=tools))
 
     # 3. 限流 — 校验通过后，检查频率
     chain.use(RateLimitMiddleware(
@@ -82,6 +85,7 @@ def build_default_chain(
         read_rpm=read_rpm,
         write_rpm=write_rpm,
         enabled=rate_limit_enabled,
+        tools=tools,
     ))
 
     # 4. 并发控制 — 限流通过后，获取文件锁 / 注册任务
@@ -89,6 +93,7 @@ def build_default_chain(
         chain.use(ConcurrencyMiddleware(
             file_lock_manager=file_lock_manager,
             resource_tracker=resource_tracker,
+            tools=tools,
         ))
 
     # 5. 审计 — 最靠近 handler，记录执行情况
