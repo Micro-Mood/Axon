@@ -566,6 +566,9 @@ class CommandHandler(BaseHandler):
             if self._stream.has_task(tid):
                 await self._stream.finalize(tid)
                 self._stream.cleanup(tid)
+            monitor = self._timeout_tasks.pop(tid, None)
+            if monitor and not monitor.done():
+                monitor.cancel()
             self._tasks.pop(tid, None)
 
         return len(completed)

@@ -199,7 +199,7 @@ _METHOD_SCHEMAS: dict[str, list[_Param]] = {
     "kill_task": [
         _p("task_id", STR, required=True, non_empty=True),
     ],
-    "get_task": [
+    "task_status": [
         _p("task_id", STR, required=True, non_empty=True),
     ],
     "wait_task": [
@@ -222,7 +222,7 @@ _METHOD_SCHEMAS: dict[str, list[_Param]] = {
     ],
 
     # ═══ SearchHandler ═══
-    "search_files": [
+    "find_files": [
         _p("pattern", STR, required=True, non_empty=True),
         _p("root", STR_OR_NONE, required=False),
         _p("recursive", BOOL, required=False, default=True),
@@ -230,7 +230,7 @@ _METHOD_SCHEMAS: dict[str, list[_Param]] = {
         _p("include_hidden", BOOL, required=False, default=False),
         _p("max_results", INT_OR_NONE, required=False, min_value=1),
     ],
-    "search_content": [
+    "find_content": [
         _p("query", STR, required=True, non_empty=True),
         _p("root", STR_OR_NONE, required=False),
         _p("file_pattern", STR, required=False, default="*"),
@@ -240,7 +240,7 @@ _METHOD_SCHEMAS: dict[str, list[_Param]] = {
         _p("include_hidden", BOOL, required=False, default=False),
         _p("max_results", INT_OR_NONE, required=False, min_value=1),
     ],
-    "search_symbol": [
+    "find_symbol": [
         _p("symbol", STR, required=True, non_empty=True),
         _p("root", STR_OR_NONE, required=False),
         _p("symbol_type", STR_OR_NONE, required=False),

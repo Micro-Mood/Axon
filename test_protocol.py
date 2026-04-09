@@ -613,6 +613,85 @@ test("传输: 无效类型报错", test_create_invalid_transport)
 
 
 # ═══════════════════════════════════════════
+#  5. 审计修复验证
+# ═══════════════════════════════════════════
+print("\n=== 审计修复验证 ===")
+
+
+def test_fix_A_search_constants():
+    """修复A: search.py 常量存在"""
+    from src.handlers.search import _MAX_REGEX_LENGTH, _PER_FILE_TIMEOUT_S
+    assert isinstance(_MAX_REGEX_LENGTH, int) and _MAX_REGEX_LENGTH > 0
+    assert isinstance(_PER_FILE_TIMEOUT_S, float) and _PER_FILE_TIMEOUT_S > 0
+test("修复A: search 常量定义", test_fix_A_search_constants)
+
+
+def test_fix_B_validation_find_methods():
+    """修复B: validation schema 使用 find_* 而非 search_*"""
+    from src.middleware.validation import _METHOD_SCHEMAS
+    assert "find_files" in _METHOD_SCHEMAS, "缺少 find_files"
+    assert "find_content" in _METHOD_SCHEMAS, "缺少 find_content"
+    assert "find_symbol" in _METHOD_SCHEMAS, "缺少 find_symbol"
+    assert "search_files" not in _METHOD_SCHEMAS, "残留 search_files"
+    assert "search_content" not in _METHOD_SCHEMAS, "残留 search_content"
+    assert "search_symbol" not in _METHOD_SCHEMAS, "残留 search_symbol"
+test("修复B: validation schema find_*", test_fix_B_validation_find_methods)
+
+
+def test_fix_C_validation_task_status():
+    """修复C: validation schema 有 task_status 无 get_task"""
+    from src.middleware.validation import _METHOD_SCHEMAS
+    assert "task_status" in _METHOD_SCHEMAS, "缺少 task_status"
+    assert "get_task" not in _METHOD_SCHEMAS, "残留 get_task"
+test("修复C: validation schema task_status", test_fix_C_validation_task_status)
+
+
+async def test_fix_D_router_optional_path():
+    """修复D: router 处理 Path | None 类型"""
+    router = MethodRouter()
+    handler = _FakeHandler()
+
+    # 创建一个带 Path | None 参数的测试方法
+    class _PathNoneHandler:
+        async def search(self, ctx: RequestContext, root: Path | None = None) -> dict:
+            return {"root_type": type(root).__name__, "root": str(root) if root else None}
+
+    h = _PathNoneHandler()
+    router.register("test_search", h.search)
+    fn = router.resolve("test_search")
+
+    # 传 string → 应自动转为 Path
+    ctx = RequestContext(method="test_search", params={"root": "/some/path"})
+    result = await fn(ctx)
+    assert result["root_type"] == "WindowsPath" or result["root_type"] == "PosixPath", \
+        f"Expected Path type, got {result['root_type']}"
+test("修复D: router Path|None 转换", test_fix_D_router_optional_path)
+
+
+async def test_fix_D_find_files_integration():
+    """修复D: find_files 端到端（搜索API可调用）"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # 创建测试文件
+        test_file = Path(tmpdir) / "hello.py"
+        test_file.write_text("print('hello')", encoding="utf-8")
+
+        config = MCPConfig(workspace={"root_path": tmpdir})
+        server = MCPServer(config)
+
+        req = json.dumps({
+            "jsonrpc": "2.0",
+            "method": "find_files",
+            "params": {"pattern": "*.py"},
+            "id": 100,
+        })
+        resp = await server.handle_request(req)
+        data = json.loads(resp)
+        assert "result" in data, f"Expected result, got: {data}"
+        assert data["result"]["total"] >= 1
+test("修复D: find_files 端到端", test_fix_D_find_files_integration)
+
+
+# ═══════════════════════════════════════════
 #  汇总
 # ═══════════════════════════════════════════
 print(f"\n{'='*40}")

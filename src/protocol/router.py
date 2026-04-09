@@ -183,6 +183,9 @@ class MethodRouter:
             ann = resolved.get(name)
             if ann is Path:
                 _path_params.add(name)
+            elif hasattr(ann, '__args__') and Path in getattr(ann, '__args__', ()):
+                # 处理 Path | None (types.UnionType) 和 Optional[Path]
+                _path_params.add(name)
 
         async def wrapped(ctx: RequestContext) -> dict[str, Any]:
             kwargs = {}

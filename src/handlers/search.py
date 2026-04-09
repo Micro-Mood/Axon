@@ -68,6 +68,10 @@ _BINARY_EXTENSIONS = frozenset({
     ".bin", ".dat", ".pak",
 })
 
+# 安全限制
+_MAX_REGEX_LENGTH = 10000
+_PER_FILE_TIMEOUT_S = 5.0
+
 
 class SearchHandler(BaseHandler):
     """文件/内容/符号搜索 handler"""

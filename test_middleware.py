@@ -292,7 +292,7 @@ test("get_method_schema", test_get_method_schema)
 
 async def test_validation_max_value():
     v = ValidationMiddleware()
-    ctx = RequestContext(method="search_content", params={
+    ctx = RequestContext(method="find_content", params={
         "query": "test",
         "context_lines": 100,  # max=50
     })
