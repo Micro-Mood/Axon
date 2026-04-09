@@ -22,7 +22,7 @@ Axon is a lightweight **Model Context Protocol (MCP)** server that gives AI assi
 
 | Feature | Description |
 |---------|-------------|
-| 📁 **File Operations** | Read, write, create, delete, move, copy, patch — with auto-encoding detection |
+| 📁 **File Operations** | Read, write, create, delete, move, copy — with auto-encoding detection |
 | 🔍 **Code Search** | Find files by glob, search content by text/regex, locate symbols across languages |
 | ⚙️ **Command Execution** | Sync run or async task management with streaming stdout/stderr |
 | 🔒 **Security Built-in** | Path boundary enforcement, dangerous command blocking (50+ patterns), rate limiting |
@@ -93,9 +93,11 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 {"jsonrpc":"2.0","id":1,"result":{"status":"ok","uptime_seconds":42.1}}
 ```
 
-## 🛠️ Tools (36 methods)
+## 🛠️ Tools
 
-### File (16)
+Axon exposes **28 AI tools** (auto-discovered plugins) and **6 protocol methods** (server management).
+
+### File (14)
 
 | Method | Description |
 |--------|-------------|
@@ -104,7 +106,6 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 | `create_file` | Create new file (optional overwrite) |
 | `delete_file` | Delete a file |
 | `stat_path` | Get file/directory metadata |
-| `exists` | Check if path exists |
 | `list_directory` | List directory contents with glob filter |
 | `move_file` | Move or rename a file |
 | `copy_file` | Copy a file |
@@ -114,14 +115,13 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 | `replace_range` | Replace lines in a file |
 | `insert_text` | Insert text at a specific line |
 | `delete_range` | Delete a range of lines |
-| `apply_patch` | Apply unified diff patch |
 
 ### Search (3)
 
 | Method | Description |
 |--------|-------------|
 | `find_files` | Search files by glob pattern |
-| `find_content` | Search text/regex in file contents with context |
+| `search_text` | Search text/regex in file contents with context |
 | `find_symbol` | Find code symbols (functions, classes, variables) across Python, JS/TS, Rust, Go, Java, C# |
 
 ### Command (10)
@@ -130,22 +130,29 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 |--------|-------------|
 | `run_command` | Execute command and wait for completion |
 | `create_task` | Spawn async task, returns task_id |
-| `stop_task` | Graceful stop (sends interrupt/terminate signal) |
-| `kill_task` | Force kill |
+| `stop_task` | Stop task — graceful by default (interrupt → 5s → force kill), `force=true` for immediate kill |
+| `del_task` | Delete completed task and free memory |
 | `task_status` | Query task state |
 | `wait_task` | Wait for task completion |
 | `list_tasks` | List all tasks |
-| `read_stdout` | Read task stdout (consumer-style) |
-| `read_stderr` | Read task stderr (consumer-style) |
+| `read_stdout` | Read task stdout (consumer-style, incremental) |
+| `read_stderr` | Read task stderr (consumer-style, incremental) |
 | `write_stdin` | Write to task stdin |
 
-### System (7)
+### System (1)
+
+| Method | Description |
+|--------|-------------|
+| `get_system_info` | Returns OS, architecture, Python version, shell, workspace, Axon version |
+
+### Protocol Methods (6)
+
+These are server management methods — not injected into AI tool lists, but callable via JSON-RPC.
 
 | Method | Description |
 |--------|-------------|
 | `ping` | Health check |
-| `get_version` | Server version info |
-| `get_methods` | List all registered methods |
+| `list_tools` | List all registered AI tools with full JSON schema |
 | `get_config` | Current config (sanitized) |
 | `set_workspace` | Switch workspace at runtime |
 | `get_stats` | Cache and task statistics |
@@ -219,10 +226,10 @@ Axon/
 │   ├── middleware/          # L5: Security, Validation, RateLimit, Concurrency, Audit
 │   ├── protocol/            # L6: JSON-RPC codec, Router, Server, Transport
 │   └── tools/               # Tool definitions (auto-discovered plugins)
-│       ├── file/            # 16 file operation tools
+│       ├── file/            # 14 file operation tools
 │       ├── search/          # 3 search tools
 │       ├── command/         # 10 command/task tools
-│       └── system/          # 7 system tools
+│       └── system/          # 1 system tool
 └── tests/                   # Test suites
 ```
 

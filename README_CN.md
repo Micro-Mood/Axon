@@ -92,9 +92,11 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 {"jsonrpc":"2.0","id":1,"result":{"status":"ok","uptime_seconds":42.1}}
 ```
 
-## 🛠️ 工具列表（36 个方法）
+## 🛠️ 工具列表
 
-### 文件（16）
+Axon 提供 **28 个 AI 工具**（自动发现插件）和 **6 个协议方法**（服务端管理）。
+
+### 文件（14）
 
 | 方法 | 说明 |
 |------|------|
@@ -103,7 +105,6 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 | `create_file` | 创建新文件（可选覆写） |
 | `delete_file` | 删除文件 |
 | `stat_path` | 获取文件/目录元信息 |
-| `exists` | 检查路径是否存在 |
 | `list_directory` | 列出目录内容，支持 glob 过滤 |
 | `move_file` | 移动/重命名文件 |
 | `copy_file` | 复制文件 |
@@ -113,14 +114,13 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 | `replace_range` | 替换文件中指定行 |
 | `insert_text` | 在指定行插入文本 |
 | `delete_range` | 删除指定行范围 |
-| `apply_patch` | 应用 unified diff 补丁 |
 
 ### 搜索（3）
 
 | 方法 | 说明 |
 |------|------|
 | `find_files` | 按 glob 模式搜索文件 |
-| `find_content` | 在文件内容中搜索文本/正则，附带上下文 |
+| `search_text` | 在文件内容中搜索文本/正则，附带上下文 |
 | `find_symbol` | 搜索代码符号（函数、类、变量），支持 Python、JS/TS、Rust、Go、Java、C# |
 
 ### 命令（10）
@@ -129,22 +129,29 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 |------|------|
 | `run_command` | 执行命令并等待完成 |
 | `create_task` | 创建异步任务，返回 task_id |
-| `stop_task` | 优雅停止（发送中断/终止信号） |
-| `kill_task` | 强制终止 |
+| `stop_task` | 停止任务 — 默认优雅停止（中断 → 5s → 强杀），`force=true` 立即强杀 |
+| `del_task` | 删除已完成任务，释放内存 |
 | `task_status` | 查询任务状态 |
 | `wait_task` | 等待任务完成 |
 | `list_tasks` | 列出所有任务 |
-| `read_stdout` | 读取任务标准输出（消费式） |
-| `read_stderr` | 读取任务标准错误（消费式） |
+| `read_stdout` | 读取任务标准输出（消费式，增量读取） |
+| `read_stderr` | 读取任务标准错误（消费式，增量读取） |
 | `write_stdin` | 写入任务标准输入 |
 
-### 系统（7）
+### 系统（1）
+
+| 方法 | 说明 |
+|------|------|
+| `get_system_info` | 返回操作系统、架构、Python 版本、Shell、工作区、Axon 版本 |
+
+### 协议方法（6）
+
+服务端管理方法 — 不会注入 AI 工具列表，但可通过 JSON-RPC 调用。
 
 | 方法 | 说明 |
 |------|------|
 | `ping` | 健康检查 |
-| `get_version` | 服务版本信息 |
-| `get_methods` | 列出所有已注册方法 |
+| `list_tools` | 列出所有已注册的 AI 工具，包含完整 JSON Schema |
 | `get_config` | 当前配置（脱敏输出） |
 | `set_workspace` | 运行时切换工作区 |
 | `get_stats` | 缓存和任务统计 |
@@ -218,10 +225,10 @@ Axon/
 │   ├── middleware/          # L5: 安全、校验、限流、并发、审计
 │   ├── protocol/            # L6: JSON-RPC 编解码、路由、服务器、传输
 │   └── tools/               # 工具定义（自动发现插件）
-│       ├── file/            # 16 个文件工具
+│       ├── file/            # 14 个文件工具
 │       ├── search/          # 3 个搜索工具
 │       ├── command/         # 10 个命令工具
-│       └── system/          # 7 个系统工具
+│       └── system/          # 1 个系统工具
 └── tests/                   # 测试套件
 ```
 

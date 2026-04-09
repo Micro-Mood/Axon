@@ -3,7 +3,7 @@ Layer 4: Handlers — 搜索操作
 
 提供三种搜索:
   find_files   — 按文件名/glob 模式搜索
-  find_content — 在文件内容中搜索文本/正则
+  search_text  — 全局全文搜索文本/正则
   find_symbol  — 搜索代码符号（函数、类、变量定义）
 
 依赖:
@@ -169,10 +169,10 @@ class SearchHandler(BaseHandler):
         }
 
     # ═══════════════════════════════════════════════════
-    #  find_content — 内容搜索
+    #  search_text — 全局全文搜索
     # ═══════════════════════════════════════════════════
 
-    async def find_content(
+    async def search_text(
         self,
         ctx: RequestContext,
         query: str,

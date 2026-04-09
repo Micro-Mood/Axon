@@ -6,8 +6,8 @@ Layer 4: Handlers — 命令执行与进程管理
 
 异步任务生命周期:
   spawn(command, cwd, timeout, env) → 创建并启动任务，返回 task_id
-  stop(task_id, signal)             → 优雅停止
-  kill(task_id)                     → 强制终止
+  stop(task_id, force)              → 停止任务（force=True 强制终止）
+  delete_task(task_id)              → 删除已完成任务，释放内存
   status(task_id)                   → 查询状态
   wait(task_id, timeout)            → 等待完成
   list()                            → 列出所有任务
@@ -51,10 +51,7 @@ from ..platform import (
     encode_input,
     force_kill,
     get_subprocess_creation_flags,
-    normalize_signal_name,
-    send_interrupt,
     send_signal_by_name,
-    send_terminate,
 )
 from ..stream import StreamManager
 from .base import BaseHandler, RequestContext, Task, TaskState
@@ -203,54 +200,78 @@ class CommandHandler(BaseHandler):
         self,
         ctx: RequestContext,
         task_id: str,
-        signal: str = "interrupt",
+        force: bool = False,
     ) -> dict[str, Any]:
         """
-        优雅停止任务
+        停止任务
 
         Args:
             task_id: 任务 ID
-            signal: 信号名 ("interrupt" / "terminate" / "kill")
+            force: True 强制终止（SIGKILL），False 优雅停止（发送中断信号，等待 5s 后强杀）
         """
         task = self._get_task(task_id)
         self._ensure_active(task)
 
-        signal_name = normalize_signal_name(signal)
-
-        if signal_name == "kill":
+        if force:
             force_kill(task.process)
+            await self._safe_wait(task.process, 5.0)
+            task.exit_code = task.process.returncode
+            task.signal = "kill"
+            self._complete_task(task, TaskState.KILLED)
         else:
-            send_signal_by_name(task.process, signal_name)
+            send_signal_by_name(task.process, "interrupt")
+            exited = await self._safe_wait(task.process, 5.0)
+            if not exited:
+                force_kill(task.process)
+                await self._safe_wait(task.process, 3.0)
+            task.exit_code = task.process.returncode
+            task.signal = "interrupt"
+            self._complete_task(task, TaskState.STOPPED)
 
-        # 等待退出，超时则强杀
-        exited = await self._safe_wait(task.process, 5.0)
-        if not exited:
-            force_kill(task.process)
-            await self._safe_wait(task.process, 3.0)
-
-        task.exit_code = task.process.returncode
-        task.signal = signal_name
-        self._complete_task(task, TaskState.STOPPED if signal_name != "kill" else TaskState.KILLED)
+        # Windows: kill 后管道不自动关闭，取消 reader 避免 finalize 等 30s
+        self._stream.cancel_readers(task.task_id)
 
         return task.to_dict()
 
-    async def kill(
+    async def delete_task(
         self,
         ctx: RequestContext,
         task_id: str,
     ) -> dict[str, Any]:
-        """强制终止任务"""
+        """
+        删除已完成的任务，释放 Task 对象和输出缓冲区内存
+
+        只能删除非运行中的任务（completed / failed / stopped / killed / timed_out）。
+        运行中的任务需先 stop_task。
+        """
         task = self._get_task(task_id)
-        self._ensure_active(task)
 
-        force_kill(task.process)
-        await self._safe_wait(task.process, 5.0)
+        # 检测进程是否已自然退出
+        await self._try_complete(task)
 
-        task.exit_code = task.process.returncode
-        task.signal = "kill"
-        self._complete_task(task, TaskState.KILLED)
+        if task.is_active:
+            raise TaskAlreadyRunningError(
+                f"任务仍在运行中，请先 stop_task: {task_id}",
+                details={"task_id": task_id, "state": task.state.value},
+            )
 
-        return task.to_dict()
+        # 清理流缓冲区
+        if self._stream.has_task(task_id):
+            await self._stream.finalize(task_id)
+            self._stream.cleanup(task_id)
+
+        # 取消超时监控
+        monitor = self._timeout_tasks.pop(task_id, None)
+        if monitor and not monitor.done():
+            monitor.cancel()
+
+        # 移除任务记录
+        self._tasks.pop(task_id, None)
+
+        return {
+            "task_id": task_id,
+            "deleted": True,
+        }
 
     async def status(
         self,
@@ -259,6 +280,10 @@ class CommandHandler(BaseHandler):
     ) -> dict[str, Any]:
         """查询任务状态"""
         task = self._get_task(task_id)
+
+        # 检测进程是否已自然退出（任务状态可能还是 RUNNING）
+        await self._try_complete(task)
+
         result = task.to_dict()
 
         # 附加流信息
@@ -341,7 +366,7 @@ class CommandHandler(BaseHandler):
         """
         self._get_task(task_id)  # 验证存在
 
-        reader_id = ctx.request_id
+        reader_id = task_id
         output = self._stream.read(task_id, "stdout", reader_id=reader_id, max_chars=max_chars)
         buf = self._stream.get_buffer(task_id, "stdout")
 
@@ -360,7 +385,7 @@ class CommandHandler(BaseHandler):
         """读取标准错误（消费式）"""
         self._get_task(task_id)
 
-        reader_id = ctx.request_id
+        reader_id = task_id
         output = self._stream.read(task_id, "stderr", reader_id=reader_id, max_chars=max_chars)
         buf = self._stream.get_buffer(task_id, "stderr")
 
@@ -521,6 +546,27 @@ class CommandHandler(BaseHandler):
                 details={"task_id": task_id},
             )
         return task
+
+    async def _try_complete(self, task: Task) -> None:
+        """检测进程是否已自然退出，自动更新任务状态"""
+        if not task.is_active:
+            return
+        if task.process.returncode is not None:
+            # returncode 已收集
+            exit_code = task.process.returncode
+            task.exit_code = exit_code
+            state = TaskState.COMPLETED if exit_code == 0 else TaskState.FAILED
+            self._complete_task(task, state)
+            return
+        # 尝试非阻塞等待 — Windows 上 returncode 需要 wait() 才能收集
+        try:
+            await asyncio.wait_for(task.process.wait(), timeout=0.1)
+            exit_code = task.process.returncode
+            task.exit_code = exit_code
+            state = TaskState.COMPLETED if exit_code == 0 else TaskState.FAILED
+            self._complete_task(task, state)
+        except asyncio.TimeoutError:
+            pass  # 进程仍在运行
 
     @staticmethod
     def _ensure_active(task: Task) -> None:

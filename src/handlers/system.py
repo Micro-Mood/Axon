@@ -1,14 +1,16 @@
 """
 Layer 4: Handlers — 系统管理
 
-提供服务级别的工具方法:
+AI 工具:
+  get_system_info  → 系统环境信息（OS、架构、Python、Shell、工作区）
+
+协议层方法（不注入 AI，客户端直接调用）:
   ping           → 健康检查
-  get_version    → 版本信息
-  get_methods    → 已注册方法列表
   get_config     → 当前配置（脱敏）
   set_workspace  → 动态切换工作区
   get_stats      → 缓存/任务统计
   clear_cache    → 清空缓存
+  list_tools     → 完整工具 schema（带分类和参数定义）
 
 依赖:
 - Layer 1: core (MCPConfig, CacheManager, ConfigHolder)
@@ -16,6 +18,9 @@ Layer 4: Handlers — 系统管理
 
 from __future__ import annotations
 
+import os
+import platform
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -50,14 +55,32 @@ class SystemHandler(BaseHandler):
     ):
         super().__init__(config, cache)
         self._config_holder = config_holder
-        self._registered_methods: list[str] = []
+        self._tools: dict | None = None
 
-    def set_registered_methods(self, methods: list[str]) -> None:
-        """由 Protocol 层调用，注入已注册的方法列表"""
-        self._registered_methods = sorted(methods)
+    def set_tools(self, tools: dict) -> None:
+        """由 Protocol 层调用，注入工具定义（用于 list_tools）"""
+        self._tools = tools
 
     # ═══════════════════════════════════════════════════
-    #  方法实现
+    #  AI 工具方法
+    # ═══════════════════════════════════════════════════
+
+    async def get_system_info(
+        self,
+        ctx: RequestContext,
+    ) -> dict[str, Any]:
+        """获取系统环境信息"""
+        return {
+            "os": platform.system().lower(),
+            "arch": platform.machine(),
+            "python": _python_version(),
+            "shell": _detect_shell(),
+            "workspace": str(self.workspace),
+            "axon_version": __version__,
+        }
+
+    # ═══════════════════════════════════════════════════
+    #  协议层方法（客户端直接调用，不注入 AI）
     # ═══════════════════════════════════════════════════
 
     async def ping(
@@ -71,24 +94,41 @@ class SystemHandler(BaseHandler):
             "uptime_seconds": round(uptime_s, 1),
         }
 
-    async def get_version(
+    async def list_tools(
         self,
         ctx: RequestContext,
     ) -> dict[str, Any]:
-        """版本信息"""
-        return {
-            "version": __version__,
-            "python": _python_version(),
-        }
+        """
+        返回完整的工具 schema（带分类和参数定义）
 
-    async def get_methods(
-        self,
-        ctx: RequestContext,
-    ) -> dict[str, Any]:
-        """列出所有已注册的方法"""
+        客户端调用此方法获取工具列表，构造 AI function calling schema。
+        """
+        if not self._tools:
+            return {"tools": {}, "total": 0}
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for t in self._tools.values():
+            group = t.group or "other"
+            tool_info: dict[str, Any] = {
+                "name": t.name,
+                "description": t.description,
+                "params": [
+                    {
+                        "name": p.name,
+                        "type": p.type,
+                        "required": p.required,
+                        **({"default": p.default} if not p.required and p.default is not None else {}),
+                        **({"description": ""} if False else {}),
+                    }
+                    for p in t.params
+                ],
+                "is_write": t.is_write,
+            }
+            grouped.setdefault(group, []).append(tool_info)
+
         return {
-            "methods": self._registered_methods,
-            "total": len(self._registered_methods),
+            "tools": grouped,
+            "total": len(self._tools),
         }
 
     async def get_config(
@@ -199,3 +239,16 @@ def _python_version() -> str:
     import sys
     v = sys.version_info
     return f"{v.major}.{v.minor}.{v.micro}"
+
+
+def _detect_shell() -> str:
+    """检测当前系统默认 shell"""
+    if platform.system() == "Windows":
+        comspec = os.environ.get("COMSPEC", "")
+        if "powershell" in comspec.lower() or shutil.which("pwsh"):
+            return "powershell"
+        return "cmd"
+    shell = os.environ.get("SHELL", "")
+    if shell:
+        return Path(shell).name
+    return "sh"

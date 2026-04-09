@@ -88,7 +88,7 @@ class StreamManager:
         if task_id in self._streams:
             logger.warning("StreamManager: task_id %s 已存在，将覆盖", task_id)
             # 取消旧的 reader 协程
-            self._cancel_readers(task_id)
+            self.cancel_readers(task_id)
 
         stdout_buf = OutputBuffer("stdout", max_size=self._max_buffer_size)
         stderr_buf = OutputBuffer("stderr", max_size=self._max_buffer_size)
@@ -197,7 +197,7 @@ class StreamManager:
         Args:
             task_id: 任务唯一标识（不存在则静默忽略）
         """
-        self._cancel_readers(task_id)
+        self.cancel_readers(task_id)
         removed = self._streams.pop(task_id, None)
         if removed:
             logger.debug("StreamManager: 清理 task=%s", task_id)
@@ -384,7 +384,7 @@ class StreamManager:
             )
         return streams
 
-    def _cancel_readers(self, task_id: str) -> None:
+    def cancel_readers(self, task_id: str) -> None:
         """取消指定任务的所有 reader 协程"""
         streams = self._streams.get(task_id)
         if streams is None:

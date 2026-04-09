@@ -124,8 +124,8 @@ class MCPServer:
             tools=self._tools,
         )
 
-        # 注入方法列表到 SystemHandler
-        self._system_handler.set_registered_methods(self._router.methods)
+        # 注入工具定义到 SystemHandler（用于 list_tools）
+        self._system_handler.set_tools(self._tools)
 
     # ═══════════════════════════════════════════════════
     #  方法注册
@@ -148,7 +148,17 @@ class MCPServer:
                 continue
             self._router.register_tool(tool_def, handler)
 
-        logger.info("已注册 %d 个方法（来自 tools/ 自动扫描）", self._router.method_count)
+        # 注册协议层方法（不通过 tools/ 插件系统，客户端直接调用）
+        self._router.register("ping", self._system_handler.ping)
+        self._router.register("list_tools", self._system_handler.list_tools)
+        self._router.register("get_config", self._system_handler.get_config)
+        self._router.register("set_workspace", self._system_handler.set_workspace)
+        self._router.register("get_stats", self._system_handler.get_stats)
+        self._router.register("clear_cache", self._system_handler.clear_cache)
+
+        logger.info("已注册 %d 个方法（%d 个 AI 工具 + %d 个协议方法）",
+                     self._router.method_count, len(self._tools),
+                     self._router.method_count - len(self._tools))
 
     # ═══════════════════════════════════════════════════
     #  请求处理
