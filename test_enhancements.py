@@ -55,6 +55,11 @@ def test_safe_commands_pass():
         "ping localhost",
         "node index.js",
         "cargo build",
+        # 以下曾经误杀的安全命令（fix: 缩窄 pattern）
+        "cat /etc/passwd",
+        "grep shutdown logs.txt",
+        "echo password is 123",
+        "ps aux | grep bcdedit",
     ]
     for cmd in safe_commands:
         checker.validate_command(cmd)  # 不应抛异常
@@ -181,7 +186,7 @@ test("拦截: 注册表操作", test_registry_operations)
 
 def test_system_commands():
     """系统级命令"""
-    for cmd in ["bcdedit /set", "shutdown /s", "taskkill /f /pid 1234"]:
+    for cmd in ["bcdedit /set", "shutdown /s /t 0", "taskkill /f /pid 1234"]:
         try:
             checker.validate_command(cmd)
             assert False, f"应被拦截: {cmd}"
@@ -743,6 +748,154 @@ async def test_full_chain_without_concurrency():
     assert len(chain) == 4, f"期望 4 个中间件，实际 {len(chain)}: {repr(chain)}"
     assert "ConcurrencyMiddleware" not in repr(chain)
 test("不传参数不加 Concurrency", test_full_chain_without_concurrency)
+
+
+# ═══════════════════════════════════════════
+#  6. 修复验证测试
+# ═══════════════════════════════════════════
+print("\n=== 修复验证 ===")
+
+
+async def test_fix_readlock_no_race():
+    """修复C: 读写锁不再竞态 — writer持有锁期间reader不能进入"""
+    mgr = AsyncFileLockManager()
+    reader_inside = False
+    writer_held = False
+    violation = False
+
+    async def writer():
+        nonlocal writer_held
+        async with mgr.write_lock("/test/rw.txt"):
+            writer_held = True
+            await asyncio.sleep(0.05)
+            # 在 writer 持有期间，reader_inside 不应为 True
+            if reader_inside:
+                nonlocal violation
+                violation = True
+            writer_held = False
+
+    async def reader():
+        nonlocal reader_inside
+        await asyncio.sleep(0.01)  # 让 writer 先启动
+        async with mgr.read_lock("/test/rw.txt"):
+            reader_inside = True
+            if writer_held:
+                nonlocal violation
+                violation = True
+            await asyncio.sleep(0.01)
+            reader_inside = False
+
+    await asyncio.gather(writer(), reader())
+    assert not violation, "reader 和 writer 同时进入了！"
+test("修复C: 读写锁互斥", test_fix_readlock_no_race)
+
+
+async def test_fix_stop_task_unregister():
+    """修复B: stop_task 正确注销任务"""
+    config = PerformanceConfig(max_concurrent_tasks=2, max_output_buffer_mb=10)
+    tracker = ResourceTracker(config)
+    mw = ConcurrencyMiddleware(resource_tracker=tracker)
+
+    # 先创建一个任务
+    async def create_handler(ctx):
+        return {"status": "ok", "data": {"task_id": "task-001"}}
+
+    ctx1 = RequestContext(method="create_task", params={"command": "sleep 100"})
+    await mw(ctx1, create_handler)
+    assert tracker.active_task_count == 1
+
+    # stop_task 应该注销
+    async def stop_handler(ctx):
+        return {"status": "ok"}
+
+    ctx2 = RequestContext(method="stop_task", params={"task_id": "task-001"})
+    await mw(ctx2, stop_handler)
+    assert tracker.active_task_count == 0, f"stop_task 后仍有 {tracker.active_task_count} 个任务"
+test("修复B: stop_task 注销任务", test_fix_stop_task_unregister)
+
+
+async def test_fix_kill_task_unregister():
+    """修复B: kill_task 正确注销任务"""
+    config = PerformanceConfig(max_concurrent_tasks=2, max_output_buffer_mb=10)
+    tracker = ResourceTracker(config)
+    mw = ConcurrencyMiddleware(resource_tracker=tracker)
+
+    async def create_handler(ctx):
+        return {"status": "ok", "data": {"task_id": "task-002"}}
+
+    ctx1 = RequestContext(method="create_task", params={"command": "sleep 100"})
+    await mw(ctx1, create_handler)
+
+    async def kill_handler(ctx):
+        return {"status": "ok"}
+
+    ctx2 = RequestContext(method="kill_task", params={"task_id": "task-002"})
+    await mw(ctx2, kill_handler)
+    assert tracker.active_task_count == 0
+test("修复B: kill_task 注销任务", test_fix_kill_task_unregister)
+
+
+async def test_fix_task_id_swap_atomic():
+    """修复G: task ID 替换是原子的，不会被其他请求抢占槽位"""
+    config = PerformanceConfig(max_concurrent_tasks=1, max_output_buffer_mb=10)
+    tracker = ResourceTracker(config)
+    mw = ConcurrencyMiddleware(resource_tracker=tracker)
+
+    async def create_handler(ctx):
+        # 模拟稍有延迟
+        await asyncio.sleep(0.01)
+        return {"status": "ok", "data": {"task_id": "real-001"}}
+
+    ctx = RequestContext(method="create_task", params={"command": "echo 1"})
+    result = await mw(ctx, create_handler)
+
+    # 替换后 real-001 应在 active set 中
+    assert "real-001" in tracker.active_task_ids
+    # 临时 ID 不应残留
+    assert all(not tid.startswith("pending-") for tid in tracker.active_task_ids)
+    # 总数仍然是 1
+    assert tracker.active_task_count == 1
+test("修复G: task ID 原子替换", test_fix_task_id_swap_atomic)
+
+
+def test_fix_no_false_positive_passwd():
+    """修复D: cat /etc/passwd 不被误杀"""
+    # 这些是安全操作
+    safe = [
+        "cat /etc/passwd",
+        "grep root /etc/passwd",
+        "echo password is secret",
+    ]
+    for cmd in safe:
+        checker.validate_command(cmd)
+
+    # 直接运行 passwd 命令仍然被拦截
+    try:
+        checker.validate_command("passwd root")
+        assert False, "passwd root 应被拦截"
+    except BlockedCommandError:
+        pass
+test("修复D: passwd 不误杀", test_fix_no_false_positive_passwd)
+
+
+def test_fix_no_false_positive_shutdown():
+    """修复D: echo shutdown 不被误杀，shutdown /s 仍拦截"""
+    checker.validate_command("echo shutdown at noon")
+    checker.validate_command('grep "shutdown" log.txt')
+
+    try:
+        checker.validate_command("shutdown /r /t 0")
+        assert False
+    except BlockedCommandError:
+        pass
+test("修复D: shutdown 不误杀", test_fix_no_false_positive_shutdown)
+
+
+def test_fix_ratelimiterror_export():
+    """修复E: RateLimitError 可从 core 层直接导入"""
+    from src.core import RateLimitError
+    assert issubclass(RateLimitError, Exception)
+test("修复E: RateLimitError 导出", test_fix_ratelimiterror_export)
 
 
 # ═══════════════════════════════════════════

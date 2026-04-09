@@ -126,6 +126,10 @@ class ConcurrencyMiddleware:
         if self._resource_tracker is not None and method in _TASK_CREATE_METHODS:
             return await self._with_task_tracking(ctx, next_handler)
 
+        # ── 任务结束 → 注销 ──
+        if self._resource_tracker is not None and method in _TASK_END_METHODS:
+            return await self._with_task_unregister(ctx, next_handler)
+
         # 其他方法直接透传
         return await next_handler(ctx)
 
@@ -194,13 +198,40 @@ class ConcurrencyMiddleware:
             raise
 
         # handler 成功 → 用真实 task_id 替换临时 ID
+        # 先注册真实 ID 再注销临时 ID，保证槽位不被抢占
         real_task_id = None
         if isinstance(result, dict):
             data = result.get("data", result)
             real_task_id = data.get("task_id")
 
-        await self._resource_tracker.unregister_task(temp_id)
         if real_task_id:
-            await self._resource_tracker.register_task(real_task_id)
+            # 先注册真实 ID（幂等，不会多占槽位因为 temp_id 还在）
+            # 但需要临时放宽一个槽位来容纳两个 ID 共存
+            # 更简洁的做法: 直接替换 set 内容
+            async with self._resource_tracker._lock:
+                self._resource_tracker._active_tasks.discard(temp_id)
+                self._resource_tracker._active_tasks.add(real_task_id)
+        else:
+            await self._resource_tracker.unregister_task(temp_id)
+
+        return result
+
+    async def _with_task_unregister(
+        self, ctx: RequestContext, next_handler: NextFunc
+    ) -> dict[str, Any]:
+        """
+        任务结束: 先执行 handler → 成功后注销 task_id
+
+        task_id 从 params 中提取（stop_task/kill_task 需要指定目标）。
+        """
+        assert self._resource_tracker is not None
+
+        result = await next_handler(ctx)
+
+        # handler 成功 → 注销 task_id
+        task_id = ctx.params.get("task_id", "")
+        if task_id:
+            await self._resource_tracker.unregister_task(task_id)
+            logger.debug("任务注销: task_id=%s method=%s", task_id, ctx.method)
 
         return result

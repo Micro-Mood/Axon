@@ -34,21 +34,28 @@ _DEFAULT_EVICT_AFTER_SECONDS = 300  # 5 分钟
 class _LockEntry:
     """单个路径的锁条目"""
 
-    __slots__ = ("lock", "last_used", "readers", "writer_waiting")
+    __slots__ = ("_rw_lock", "last_used", "readers", "_no_writer", "_no_reader")
 
     def __init__(self) -> None:
-        self.lock = asyncio.Lock()
+        self._rw_lock = asyncio.Lock()       # 保护 readers 计数器
         self.last_used: float = time.monotonic()
         self.readers: int = 0
-        self.writer_waiting: bool = False
+        self._no_writer = asyncio.Event()    # 没有 writer 时 set
+        self._no_writer.set()
+        self._no_reader = asyncio.Event()    # 没有 reader 时 set
+        self._no_reader.set()
 
     def touch(self) -> None:
         self.last_used = time.monotonic()
 
+    @property
+    def is_write_locked(self) -> bool:
+        return not self._no_writer.is_set()
+
     def is_stale(self, evict_after: float) -> bool:
         return (
             time.monotonic() - self.last_used > evict_after
-            and not self.lock.locked()
+            and self._no_writer.is_set()
             and self.readers == 0
         )
 
@@ -109,7 +116,8 @@ class AsyncFileLockManager:
         获取排他写锁
 
         同一路径同一时刻只允许一个 writer。
-        writer 等待时会阻止新的 reader 进入（写者优先）。
+        writer 必须等待所有 reader 退出后才能进入。
+        writer 等待期间新 reader 不可进入（写者优先）。
 
         Args:
             path: 文件路径
@@ -118,19 +126,22 @@ class AsyncFileLockManager:
             None — 在 async with 块内持有锁
         """
         entry = await self._get_entry(path)
-        entry.writer_waiting = True
+
+        # 声明写者意图: 清除 _no_writer → 阻止新 reader 进入
+        entry._no_writer.clear()
         try:
-            await entry.lock.acquire()
-            entry.writer_waiting = False
+            # 等待所有 reader 退出
+            await entry._no_reader.wait()
+            # 排他: 同时只有一个 writer
+            await entry._rw_lock.acquire()
             entry.touch()
             try:
                 yield
             finally:
-                entry.lock.release()
+                entry._rw_lock.release()
                 entry.touch()
-        except BaseException:
-            entry.writer_waiting = False
-            raise
+        finally:
+            entry._no_writer.set()
 
     @asynccontextmanager
     async def read_lock(self, path: str | Path) -> AsyncIterator[None]:
@@ -138,11 +149,10 @@ class AsyncFileLockManager:
         获取共享读锁
 
         多个 reader 可以同时持有。
-        如果有 writer 正在等待或持有锁，reader 需等待。
+        如果有 writer 正在等待或持有锁，reader 需等待（写者优先）。
 
-        简化实现: 读锁等待写锁释放，但不阻塞其他读锁。
-        在文件操作场景下，读操作冲突写操作的概率不高，
-        这种简化足够。
+        实现: 通过 _rw_lock 保护 readers 计数器的修改，
+        确保 reader 进入/退出与 writer 互斥，消除竞态。
 
         Args:
             path: 文件路径
@@ -152,17 +162,23 @@ class AsyncFileLockManager:
         """
         entry = await self._get_entry(path)
 
-        # 等待写者释放
-        while entry.lock.locked() or entry.writer_waiting:
-            await asyncio.sleep(0.001)
+        # 等待写者完成（写者优先）
+        await entry._no_writer.wait()
 
-        entry.readers += 1
-        entry.touch()
+        # 在 _rw_lock 保护下增加计数器，与 writer 互斥
+        async with entry._rw_lock:
+            entry.readers += 1
+            entry._no_reader.clear()
+            entry.touch()
+
         try:
             yield
         finally:
-            entry.readers -= 1
-            entry.touch()
+            async with entry._rw_lock:
+                entry.readers -= 1
+                if entry.readers == 0:
+                    entry._no_reader.set()
+                entry.touch()
 
     async def cleanup(self) -> int:
         """
@@ -194,7 +210,7 @@ class AsyncFileLockManager:
 
     def stats(self) -> dict[str, Any]:
         """统计信息"""
-        locked = sum(1 for e in self._locks.values() if e.lock.locked())
+        locked = sum(1 for e in self._locks.values() if e.is_write_locked)
         reading = sum(1 for e in self._locks.values() if e.readers > 0)
         return {
             "total_entries": len(self._locks),

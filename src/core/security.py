@@ -107,18 +107,18 @@ _DANGEROUS_PATTERNS: list[_DangerousPattern] = _compile_patterns([
     ("reg_add_force",          r'\breg\s+add\s+.*\/f'),
 
     # ── 系统级危险命令 ──
-    ("win_bcdedit",            r'\bbcdedit\b'),
-    ("win_shutdown",           r'\bshutdown\b'),
+    ("win_bcdedit",            r'\bbcdedit\s'),
+    ("win_shutdown",           r'\bshutdown\s+/[srt]'),
     ("win_taskkill_force",     r'\btaskkill\s+/f'),
     ("unix_chmod_suid",        r'\bchmod\s+[ugo]*\+s'),
     ("unix_chown_root",        r'\bchown\s+root'),
 
     # ── 用户/权限操作 ──
-    ("win_net_user",           r'\bnet\s+user\b'),
-    ("win_net_localgroup",     r'\bnet\s+localgroup\b'),
-    ("win_runas",              r'\brunas\b'),
+    ("win_net_user",           r'\bnet\s+user\s'),
+    ("win_net_localgroup",     r'\bnet\s+localgroup\s'),
+    ("win_runas",              r'\brunas\s+/'),
     ("unix_sudo_su",           r'\bsudo\s+su\b'),
-    ("unix_passwd",            r'\bpasswd\b'),
+    ("unix_passwd",            r'^\s*passwd\b'),
 
     # ── 反弹 shell ──
     ("reverse_shell_bash",     r'\bbash\s+-i\s+>'),
