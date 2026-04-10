@@ -38,23 +38,29 @@ def default_blocked_paths() -> list[str]:
         路径字符串列表
     """
     if IS_WINDOWS:
+        import os as _os
+        _sysroot = _os.environ.get('SystemRoot', 'C:\\Windows')
+        _progfiles = _os.environ.get('ProgramFiles', 'C:\\Program Files')
+        _progfiles86 = _os.environ.get('ProgramFiles(x86)', 'C:\\Program Files (x86)')
+        _programdata = _os.environ.get('ProgramData', 'C:\\ProgramData')
+        _sysdrive = _os.environ.get('SystemDrive', 'C:')
         return [
             # 系统核心
-            "C:\\Windows",
-            "C:\\Windows\\System32",
-            "C:\\Windows\\SysWOW64",
+            _sysroot,
+            _os.path.join(_sysroot, "System32"),
+            _os.path.join(_sysroot, "SysWOW64"),
             # 程序目录
-            "C:\\Program Files",
-            "C:\\Program Files (x86)",
-            "C:\\ProgramData",
+            _progfiles,
+            _progfiles86,
+            _programdata,
             # 引导和恢复
-            "C:\\Boot",
-            "C:\\Recovery",
-            "C:\\System Volume Information",
+            _sysdrive + "\\Boot",
+            _sysdrive + "\\Recovery",
+            _sysdrive + "\\System Volume Information",
             # 回收站
-            "C:\\$Recycle.Bin",
+            _sysdrive + "\\$Recycle.Bin",
             # EFI 分区
-            "C:\\EFI",
+            _sysdrive + "\\EFI",
         ]
     elif IS_MACOS:
         return [
