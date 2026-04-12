@@ -9,6 +9,7 @@ Layer 4: Handlers — 业务逻辑层
 - SearchHandler: 搜索操作 (3 个方法)
 - CommandHandler: 命令执行与进程管理 (10 个方法)
 - SystemHandler: 系统管理 (7 个方法)
+- WebHandler: 网络操作 (1 个方法)
 
 依赖:
 - Layer 1: core (Config, Cache, Errors)
@@ -21,6 +22,7 @@ from .command import CommandHandler
 from .file import FileHandler
 from .search import SearchHandler
 from .system import SystemHandler
+from .web import WebHandler
 
 __all__ = [
     # 基础
@@ -33,4 +35,5 @@ __all__ = [
     "SearchHandler",
     "CommandHandler",
     "SystemHandler",
+    "WebHandler",
 ]

@@ -49,12 +49,9 @@ _CWD_PARAMS = frozenset({"cwd"})
 # 写操作方法名 — 需要额外检查写权限
 # 默认硬编码，可通过构造函数注入 tools 自动派生
 _WRITE_METHODS = frozenset({
-    "create_file",
     "write_file",
-    "replace_range",
-    "insert_text",
-    "delete_range",
-    "apply_patch",
+    "replace_string_in_file",
+    "multi_replace_string_in_file",
     "move_file",
     "copy_file",
     "delete_file",
@@ -80,7 +77,7 @@ class SecurityMiddleware:
     - env → validate_env()
     - cwd → validate_cwd()
 
-    写操作（create_file, write_file 等）额外检查目标路径的写权限。
+    写操作（write_file, replace_string_in_file 等）额外检查目标路径的写权限。
 
     校验后的绝对路径写入 ctx.validated_paths:
         ctx.validated_paths["path"] = Path("/abs/path/to/file")

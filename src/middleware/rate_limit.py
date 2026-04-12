@@ -34,12 +34,9 @@ logger = logging.getLogger(__name__)
 # 写操作方法名 — 使用更严格的限流
 # 默认硬编码，可通过构造函数注入 tools 自动派生
 _WRITE_METHODS = frozenset({
-    "create_file",
     "write_file",
-    "replace_range",
-    "insert_text",
-    "delete_range",
-    "apply_patch",
+    "replace_string_in_file",
+    "multi_replace_string_in_file",
     "move_file",
     "copy_file",
     "delete_file",

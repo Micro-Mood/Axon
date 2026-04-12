@@ -90,24 +90,25 @@ ALL_TOOLS = discover_all()
 
 
 def test_discover_count():
-    """应发现 36 个 tool"""
-    assert len(ALL_TOOLS) == 36, f"期望 36 个 tool，实际 {len(ALL_TOOLS)}"
+    """应发现 27 个 tool"""
+    assert len(ALL_TOOLS) == 27, f"期望 27 个 tool，实际 {len(ALL_TOOLS)}"
 
-test("发现 36 个 tool", test_discover_count)
+test("发现 27 个 tool", test_discover_count)
 
 
 def test_discover_groups():
-    """4 个 group: file(16), search(3), command(10), system(7)"""
+    """5 个 group: file(12), search(3), command(10), system(1), web(1)"""
     groups = {}
     for t in ALL_TOOLS.values():
         groups.setdefault(t.group, []).append(t.name)
 
-    assert len(groups["file"]) == 16, f"file 应有 16 个: {groups.get('file')}"
-    assert len(groups["search"]) == 3, f"search 应有 3 个: {groups.get('search')}"
-    assert len(groups["command"]) == 10, f"command 应有 10 个: {groups.get('command')}"
-    assert len(groups["system"]) == 7, f"system 应有 7 个: {groups.get('system')}"
+    assert len(groups["file"]) == 12, f"file 应有12 个: {groups.get('file')}"
+    assert len(groups["search"]) == 3, f"search 应有3 个: {groups.get('search')}"
+    assert len(groups["command"]) == 10, f"command 应有10 个: {groups.get('command')}"
+    assert len(groups["system"]) == 1, f"system 应有1 个: {groups.get('system')}"
+    assert len(groups["web"]) == 1, f"web 应有 1 个: {groups.get('web')}"
 
-test("4 个 group 数量正确", test_discover_groups)
+test("5 个 group 数量正确", test_discover_groups)
 
 
 def test_discover_all_have_execute():
@@ -136,16 +137,12 @@ EXPECTED_TOOLS = {
     # File read
     "read_file": {"lock": "read", "is_write": False, "group": "file"},
     "stat_path": {"lock": "read", "is_write": False, "group": "file"},
-    "exists": {"lock": "read", "is_write": False, "group": "file"},
     "list_directory": {"lock": "none", "is_write": False, "group": "file"},
     # File write
-    "create_file": {"lock": "write", "is_write": True, "group": "file"},
     "write_file": {"lock": "write", "is_write": True, "group": "file"},
     "create_directory": {"lock": "dir_write", "is_write": True, "group": "file"},
-    "replace_range": {"lock": "write", "is_write": True, "group": "file"},
-    "insert_text": {"lock": "write", "is_write": True, "group": "file"},
-    "delete_range": {"lock": "write", "is_write": True, "group": "file"},
-    "apply_patch": {"lock": "write", "is_write": True, "group": "file"},
+    "replace_string_in_file": {"lock": "write", "is_write": True, "group": "file"},
+    "multi_replace_string_in_file": {"lock": "write", "is_write": True, "group": "file"},
     "delete_file": {"lock": "write", "is_write": True, "group": "file"},
     # File move
     "move_file": {"lock": "write_dual", "is_write": True, "group": "file"},
@@ -155,13 +152,13 @@ EXPECTED_TOOLS = {
     "delete_directory": {"lock": "dir_write", "is_write": True, "group": "file"},
     # Search
     "find_files": {"lock": "none", "is_write": False, "group": "search"},
-    "find_content": {"lock": "none", "is_write": False, "group": "search"},
+    "search_text": {"lock": "none", "is_write": False, "group": "search"},
     "find_symbol": {"lock": "none", "is_write": False, "group": "search"},
     # Command
     "run_command": {"lock": "none", "is_write": False, "track": None, "group": "command"},
     "create_task": {"lock": "none", "is_write": False, "track": "task_create", "group": "command"},
     "stop_task": {"lock": "none", "is_write": False, "track": "task_end", "group": "command"},
-    "kill_task": {"lock": "none", "is_write": False, "track": "task_end", "group": "command"},
+    "del_task": {"lock": "none", "is_write": False, "group": "command"},
     "task_status": {"lock": "none", "is_write": False, "group": "command"},
     "wait_task": {"lock": "none", "is_write": False, "group": "command"},
     "list_tasks": {"lock": "none", "is_write": False, "group": "command"},
@@ -169,13 +166,9 @@ EXPECTED_TOOLS = {
     "read_stderr": {"lock": "none", "is_write": False, "group": "command"},
     "write_stdin": {"lock": "none", "is_write": False, "group": "command"},
     # System
-    "ping": {"lock": "none", "is_write": False, "group": "system"},
-    "get_version": {"lock": "none", "is_write": False, "group": "system"},
-    "get_methods": {"lock": "none", "is_write": False, "group": "system"},
-    "get_config": {"lock": "none", "is_write": False, "group": "system"},
-    "set_workspace": {"lock": "none", "is_write": True, "group": "system"},
-    "get_stats": {"lock": "none", "is_write": False, "group": "system"},
-    "clear_cache": {"lock": "none", "is_write": False, "group": "system"},
+    "get_system_info": {"lock": "none", "is_write": False, "group": "system"},
+    # Web
+    "fetch_webpage": {"lock": "none", "is_write": False, "group": "web"},
 }
 
 
@@ -201,9 +194,8 @@ def test_metadata_track():
     """task tracking 元数据正确"""
     assert ALL_TOOLS["create_task"].track == "task_create"
     assert ALL_TOOLS["stop_task"].track == "task_end"
-    assert ALL_TOOLS["kill_task"].track == "task_end"
     # 其他 command 工具不追踪
-    for name in ["run_command", "task_status", "wait_task", "list_tasks", "read_stdout", "read_stderr", "write_stdin"]:
+    for name in ["run_command", "del_task", "task_status", "wait_task", "list_tasks", "read_stdout", "read_stderr", "write_stdin"]:
         assert ALL_TOOLS[name].track is None, f"{name} 不应有 track"
 
 test("track 元数据正确", test_metadata_track)
@@ -229,11 +221,10 @@ def test_methods_by_lock():
     reads = methods_by_lock(ALL_TOOLS, "read")
     assert "read_file" in reads
     assert "stat_path" in reads
-    assert "exists" in reads
-    assert "create_file" not in reads
+    assert "replace_string_in_file" not in reads
 
     writes = methods_by_lock(ALL_TOOLS, "write")
-    assert "create_file" in writes
+    assert "replace_string_in_file" in writes
     assert "write_file" in writes
     assert "read_file" not in writes
 
@@ -248,11 +239,11 @@ test("methods_by_lock", test_methods_by_lock)
 def test_write_methods():
     """写操作方法集"""
     wm = write_methods(ALL_TOOLS)
-    assert len(wm) == 13  # 12 file write + set_workspace
-    assert "create_file" in wm
-    assert "set_workspace" in wm
+    assert len(wm) == 9  # 9 file write tools
+    assert "replace_string_in_file" in wm
+    assert "multi_replace_string_in_file" in wm
     assert "read_file" not in wm
-    assert "ping" not in wm
+    assert "get_system_info" not in wm
 
 test("write_methods", test_write_methods)
 
@@ -263,7 +254,7 @@ def test_track_methods():
     assert creates == frozenset({"create_task"})
 
     ends = track_methods(ALL_TOOLS, "task_end")
-    assert ends == frozenset({"stop_task", "kill_task"})
+    assert ends == frozenset({"stop_task"})
 
 test("track_methods", test_track_methods)
 
@@ -271,16 +262,16 @@ test("track_methods", test_track_methods)
 def test_get_params():
     """参数字典"""
     params_map = get_params(ALL_TOOLS)
-    assert len(params_map) == 36
+    assert len(params_map) == 27
 
-    # read_file 有 4 个参数
+    # read_file 有4 个参数
     rf = params_map["read_file"]
     assert len(rf) == 4
     names = {p.name for p in rf}
     assert names == {"path", "encoding", "line_range", "max_size"}
 
-    # ping 没有参数
-    assert params_map["ping"] == []
+    # get_system_info 没有参数
+    assert params_map["get_system_info"] == []
 
 test("get_params", test_get_params)
 
@@ -338,15 +329,10 @@ print("\n=== 中间件方法集一致性 ===")
 
 
 def test_security_write_methods_match():
-    """SecurityMiddleware 实例用 tools 派生的 write_methods 包含 set_workspace"""
-    from src.middleware.security import SecurityMiddleware, _WRITE_METHODS as SEC_WRITE
-    # 内置常量不含 set_workspace（它不需要文件写权限检查）
-    assert "set_workspace" not in SEC_WRITE
-    # 但 tools 派生的 is_write 集合包含 set_workspace（限流用）
+    """SecurityMiddleware 内置常量与 tools 派生的 write_methods 一致"""
+    from src.middleware.security import _WRITE_METHODS as SEC_WRITE
     tools_write = write_methods(ALL_TOOLS)
-    assert "set_workspace" in tools_write
-    # 差异仅此一项
-    assert tools_write - SEC_WRITE == {"set_workspace"}
+    assert tools_write == SEC_WRITE, f"差异: tools多={tools_write - SEC_WRITE}, 少={SEC_WRITE - tools_write}"
 
 test("security write_methods 一致", test_security_write_methods_match)
 
@@ -355,7 +341,8 @@ def test_ratelimit_write_methods_match():
     """tools 的 is_write 与 rate_limit middleware 的 _WRITE_METHODS 一致"""
     from src.middleware.rate_limit import _WRITE_METHODS as RL_WRITE
     tools_write = write_methods(ALL_TOOLS)
-    assert tools_write == RL_WRITE, f"差异: tools多={tools_write - RL_WRITE}, 少={RL_WRITE - tools_write}"
+    # rate_limit 多包含 set_workspace（限流用，非文件操作）
+    assert tools_write | {"set_workspace"} == RL_WRITE, f"差异: tools多={tools_write - RL_WRITE}, 少={RL_WRITE - tools_write - {'set_workspace'}}"
 
 test("rate_limit write_methods 一致", test_ratelimit_write_methods_match)
 
@@ -397,15 +384,15 @@ def test_server_uses_tools():
         config = MCPConfig(workspace={"root_path": tmp})
         server = MCPServer(config)
 
-        # 36 个方法都已注册
+        # 33 个方法都已注册（27 个 AI 工具 + 6 个协议方法）
         methods = server._router.methods
-        assert len(methods) == 36, f"期望 36 个方法，实际 {len(methods)}: {methods}"
+        assert len(methods) == 33, f"期望 33 个方法，实际 {len(methods)}: {methods}"
 
         # 关键方法存在
         for name in ["read_file", "find_files", "run_command", "ping"]:
             assert name in methods, f"方法 {name} 未注册"
 
-test("MCPServer 注册 36 个方法", test_server_uses_tools)
+test("MCPServer 注册 33 个方法", test_server_uses_tools)
 
 
 async def test_server_e2e_ping():
@@ -459,8 +446,8 @@ async def test_server_e2e_read_file():
 test("端到端: read_file", test_server_e2e_read_file)
 
 
-async def test_server_e2e_create_file():
-    """端到端: create_file 写操作通过 tools 注册"""
+async def test_server_e2e_write_file():
+    """端到端: write_file 写操作通过 tools 注册"""
     from src.protocol.server import MCPServer
     with tempfile.TemporaryDirectory() as tmp:
         from src.core.config import MCPConfig
@@ -470,7 +457,7 @@ async def test_server_e2e_create_file():
 
         req = json.dumps({
             "jsonrpc": "2.0",
-            "method": "create_file",
+            "method": "write_file",
             "id": 3,
             "params": {
                 "path": str(Path(tmp) / "new.txt"),
@@ -486,7 +473,7 @@ async def test_server_e2e_create_file():
         assert (Path(tmp) / "new.txt").read_text(encoding="utf-8") == "created via tools"
         await server.shutdown()
 
-test("端到端: create_file", test_server_e2e_create_file)
+test("端到端: write_file", test_server_e2e_write_file)
 
 
 async def test_server_e2e_find_files():
@@ -615,7 +602,7 @@ test("ValidationMiddleware 用 tools schema 校验", test_validation_with_tools)
 
 
 async def test_security_with_tools():
-    """SecurityMiddleware 使用 tools 知道 set_workspace 是写操作"""
+    """SecurityMiddleware 使用 tools 百則写操作"""
     from src.middleware.security import SecurityMiddleware
     from src.core.config import MCPConfig
     from src.core.security import SecurityChecker
@@ -625,8 +612,10 @@ async def test_security_with_tools():
         config = MCPConfig(workspace={"root_path": tmp})
         security = SecurityChecker(config.security)
         mw = SecurityMiddleware(config, security, tools=ALL_TOOLS)
-        # set_workspace 应在 write_methods 中
-        assert "set_workspace" in mw._write_methods
+        # 写操作应在 write_methods 中
+        assert "write_file" in mw._write_methods
+        assert "replace_string_in_file" in mw._write_methods
+        assert "read_file" not in mw._write_methods
 
 test("SecurityMiddleware 用 tools 派生 write_methods", test_security_with_tools)
 
@@ -636,7 +625,7 @@ async def test_concurrency_with_tools():
     from src.middleware.concurrency import ConcurrencyMiddleware
 
     mw = ConcurrencyMiddleware(tools=ALL_TOOLS)
-    assert "create_file" in mw._file_write
+    assert "replace_string_in_file" in mw._file_write
     assert "move_file" in mw._file_move
     assert "create_directory" in mw._dir_write
     assert "read_file" in mw._file_read

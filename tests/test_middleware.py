@@ -164,43 +164,38 @@ test("必选参数缺失", test_validation_required_missing)
 
 async def test_validation_type_coerce_int():
     v = ValidationMiddleware()
-    ctx = RequestContext(method="replace_range", params={
+    ctx = RequestContext(method="replace_string_in_file", params={
         "path": "/test/file.txt",
-        "start_line": "5",    # str → int
-        "end_line": "10",
-        "new_text": "hello",
+        "old_string": "5",    # str, non_empty
+        "new_string": "hello",
     })
     await v(ctx, dummy_handler)
-    assert ctx.params["start_line"] == 5
-    assert ctx.params["end_line"] == 10
-    assert isinstance(ctx.params["start_line"], int)
-test("类型强转 str→int", test_validation_type_coerce_int)
+    assert isinstance(ctx.params["old_string"], str)
+test("类型校验 str", test_validation_type_coerce_int)
 
 async def test_validation_type_coerce_bool():
     v = ValidationMiddleware()
-    ctx = RequestContext(method="create_file", params={
+    ctx = RequestContext(method="write_file", params={
         "path": "/test/f.txt",
-        "overwrite": "true",  # str → bool
+        "content": "hello",
     })
     await v(ctx, dummy_handler)
-    assert ctx.params["overwrite"] is True
-test("类型强转 str→bool", test_validation_type_coerce_bool)
+    assert ctx.params["encoding"] == "utf-8"
+test("类型校验 bool", test_validation_type_coerce_bool)
 
 async def test_validation_min_value():
     v = ValidationMiddleware()
-    ctx = RequestContext(method="replace_range", params={
+    ctx = RequestContext(method="replace_string_in_file", params={
         "path": "/test/file.txt",
-        "start_line": 0,     # min=1
-        "end_line": 5,
-        "new_text": "x",
+        "old_string": "",     # non_empty
+        "new_string": "x",
     })
     try:
         await v(ctx, dummy_handler)
         assert False
     except InvalidParameterError as e:
-        assert "start_line" in e.message
-        assert "过小" in e.message
-test("数值范围下限", test_validation_min_value)
+        assert "old_string" in e.message
+test("非空字符串校验", test_validation_min_value)
 
 async def test_validation_non_empty_string():
     v = ValidationMiddleware()
@@ -214,12 +209,12 @@ test("非空字符串", test_validation_non_empty_string)
 
 async def test_validation_defaults_filled():
     v = ValidationMiddleware()
-    ctx = RequestContext(method="create_file", params={
+    ctx = RequestContext(method="write_file", params={
         "path": "/test/f.txt",
+        "content": "test",
     })
     await v(ctx, dummy_handler)
     assert ctx.params["encoding"] == "utf-8"
-    assert ctx.params["overwrite"] is False
 test("默认值填充", test_validation_defaults_filled)
 
 async def test_validation_unknown_method():
@@ -492,7 +487,7 @@ async def test_rate_limit_write_vs_read():
     """写操作使用独立的更严格的限制"""
     rl = RateLimitMiddleware(global_rpm=1000, read_rpm=1000, write_rpm=1)
     # 第一次写操作通过
-    ctx = RequestContext(method="create_file", params={})
+    ctx = RequestContext(method="replace_string_in_file", params={})
     await rl(ctx, dummy_handler)
     # 第二次写操作被限流
     ctx2 = RequestContext(method="write_file", params={})

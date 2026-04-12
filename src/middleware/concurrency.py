@@ -37,12 +37,9 @@ logger = logging.getLogger(__name__)
 
 # 文件写操作 — 需要对目标路径加排他锁
 _FILE_WRITE_METHODS = frozenset({
-    "create_file",
     "write_file",
-    "replace_range",
-    "insert_text",
-    "delete_range",
-    "apply_patch",
+    "replace_string_in_file",
+    "multi_replace_string_in_file",
     "delete_file",
 })
 
@@ -63,7 +60,6 @@ _DIR_WRITE_METHODS = frozenset({
 _FILE_READ_METHODS = frozenset({
     "read_file",
     "stat_path",
-    "exists",
 })
 
 # 任务创建方法 — 需要注册到 ResourceTracker
@@ -74,7 +70,6 @@ _TASK_CREATE_METHODS = frozenset({
 # 任务结束方法 — 从 ResourceTracker 注销
 _TASK_END_METHODS = frozenset({
     "stop_task",
-    "kill_task",
 })
 
 # 所有需要文件排他锁的方法

@@ -11,7 +11,7 @@ Layer 6: Protocol — MCP Server 主体
 
 依赖:
 - Layer 1: core (config, security, cache, errors, resource, filelock)
-- Layer 4: handlers (file, search, command, system)
+- Layer 4: handlers (file, search, command, system, web)
 - Layer 5: middleware (build_default_chain)
 - Layer 6: protocol (router, jsonrpc)
 """
@@ -34,6 +34,7 @@ from ..handlers.command import CommandHandler
 from ..handlers.file import FileHandler
 from ..handlers.search import SearchHandler
 from ..handlers.system import SystemHandler
+from ..handlers.web import WebHandler
 from ..middleware import build_default_chain
 from ..middleware.chain import MiddlewareChain
 from ..stream import StreamManager
@@ -109,6 +110,7 @@ class MCPServer:
             self._config, self._cache,
             self._config_holder,
         )
+        self._web_handler = WebHandler(self._config, self._cache)
 
         # ── Layer 6: Router ──
         self._router = MethodRouter()
@@ -139,6 +141,7 @@ class MCPServer:
             "search": self._search_handler,
             "command": self._command_handler,
             "system": self._system_handler,
+            "web": self._web_handler,
         }
 
         for name, tool_def in self._tools.items():

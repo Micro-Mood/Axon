@@ -180,11 +180,11 @@ def discover_all() -> dict[str, ToolDef]:
     Returns:
         {method_name: ToolDef} 字典
     """
-    from . import file, search, command, system
+    from . import file, search, command, system, web
 
     all_tools: dict[str, ToolDef] = {}
 
-    for package in [file, search, command, system]:
+    for package in [file, search, command, system, web]:
         for tool_def in load_tools_from_package(package):
             if tool_def.name in all_tools:
                 logger.warning(

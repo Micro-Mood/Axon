@@ -181,6 +181,43 @@ Returns system environment information. **(AI tool)**
 
 ---
 
+## Web API
+
+### fetch_webpage
+
+Fetches the main content from a web page, automatically stripping HTML tags. **(AI tool)**
+
+**Params**:
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | str | ✅ | Web page URL (http:// or https://) |
+| `query` | str | ❌ | Search keyword — returns matching paragraphs instead of full text |
+
+**Response**:
+
+```json
+{
+  "url": "https://example.com",
+  "status": 200,
+  "content": "Page text content...",
+  "length": 12345,
+  "truncated": false
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | str | Requested URL |
+| `status` | int | HTTP status code |
+| `content` | str | Extracted text content |
+| `length` | int | Returned text length |
+| `truncated` | bool | Whether truncated (exceeds 100K characters) |
+
+**Errors**: `INVALID_PARAMETER` (invalid URL format), `INTERNAL_ERROR` (network request failed/timeout)
+
+---
+
 ### ping
 
 Health check. **(Protocol method)**
@@ -221,9 +258,10 @@ Returns full tool schema for AI function calling. **(Protocol method)**
     ],
     "search": ["..."],
     "command": ["..."],
-    "system": ["..."]
+    "system": ["..."],
+    "web": ["..."]
   },
-  "total": 28
+  "total": 27
 }
 ```
 
@@ -357,14 +395,14 @@ Read file content with auto-encoding detection.
 
 ### write_file
 
-Overwrite existing file.
+Write file content. Creates the file (and parent directories) if it doesn't exist.
 
 **Params**:
 
 | Param | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `path` | str | ✓ | — | File path |
-| `content` | str | ✓ | — | New content |
+| `content` | str | ✓ | — | File content |
 | `encoding` | str | ✗ | `"utf-8"` | Write encoding |
 
 **Response**:
@@ -373,30 +411,9 @@ Overwrite existing file.
 {"path": "/workspace/file.txt", "size": 1234, "encoding": "utf-8"}
 ```
 
-**Errors**: `FILE_NOT_FOUND`, `ENCODING_ERROR`
+When a new file is created, the response includes `"created": true`.
 
----
-
-### create_file
-
-Create a new file.
-
-**Params**:
-
-| Param | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `path` | str | ✓ | — | File path |
-| `content` | str | ✗ | `""` | Initial content |
-| `encoding` | str | ✗ | `"utf-8"` | Write encoding |
-| `overwrite` | bool | ✗ | `false` | Overwrite if exists |
-
-**Response**:
-
-```json
-{"path": "/workspace/file.txt", "size": 0, "encoding": "utf-8", "created": true}
-```
-
-**Errors**: `CONCURRENT_MODIFICATION` (exists and overwrite=false), `ENCODING_ERROR`
+**Errors**: `ENCODING_ERROR`
 
 ---
 
@@ -604,79 +621,56 @@ Delete a directory.
 
 ---
 
-### replace_range
+### replace_string_in_file
 
-Replace a range of lines in a file.
+Find `old_string` in a file and replace it with `new_string`. The `old_string` must match exactly and appear only once in the file.
 
 **Params**:
 
 | Param | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `path` | str | ✓ | — | File path |
-| `start_line` | int | ✓ | — | Start line (1-based) |
-| `end_line` | int | ✓ | — | End line (1-based, inclusive) |
-| `new_text` | str | ✓ | — | Replacement text |
+| `old_string` | str | ✓ | — | Text to find (must be unique in file) |
+| `new_string` | str | ✓ | — | Replacement text |
 | `encoding` | str | ✗ | `"utf-8"` | File encoding |
+
+**Response**:
+
+```json
+{"path": "/workspace/file.txt", "replacements": 1, "total_lines": 50}
+```
+
+**Errors**: `FILE_NOT_FOUND`, `INVALID_PARAMETER` (not found or multiple matches), `ENCODING_ERROR`
+
+---
+
+### multi_replace_string_in_file
+
+Batch text replacements. Each item in `replacements` must contain `path`, `old_string`, and `new_string`.
+
+**Params**:
+
+| Param | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `replacements` | list | ✓ | — | Array of `{path, old_string, new_string}` |
+| `encoding` | str | ✗ | `"utf-8"` | Default encoding |
 
 **Response**:
 
 ```json
 {
-  "path": "/workspace/file.txt",
-  "replaced_lines": [5, 10],
-  "old_text": "...",
-  "new_text": "...",
-  "total_lines": 50
+  "total": 3,
+  "succeeded": 2,
+  "failed": 1,
+  "results": [
+    {"index": 0, "path": "/workspace/a.py", "success": true},
+    {"index": 1, "path": "/workspace/b.py", "success": true},
+    {"index": 2, "path": "/workspace/c.py", "success": false, "error": "old_string not found"}
+  ]
 }
 ```
 
-**Errors**: `FILE_NOT_FOUND`, `INVALID_PARAMETER` (invalid line range), `ENCODING_ERROR`
-
----
-
-### insert_text
-
-Insert text before a specific line.
-
-**Params**:
-
-| Param | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `path` | str | ✓ | — | File path |
-| `line` | int | ✓ | — | Insert position (1-based) |
-| `text` | str | ✓ | — | Text to insert |
-| `encoding` | str | ✗ | `"utf-8"` | File encoding |
-
-**Response**:
-
-```json
-{"path": "/workspace/file.txt", "inserted_at": 5, "inserted_lines": 3, "total_lines": 53}
-```
-
-**Errors**: `FILE_NOT_FOUND`, `INVALID_PARAMETER` (invalid line number), `ENCODING_ERROR`
-
----
-
-### delete_range
-
-Delete a range of lines.
-
-**Params**:
-
-| Param | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `path` | str | ✓ | — | File path |
-| `start_line` | int | ✓ | — | Start line (1-based) |
-| `end_line` | int | ✓ | — | End line (1-based, inclusive) |
-| `encoding` | str | ✗ | `"utf-8"` | File encoding |
-
-**Response**:
-
-```json
-{"path": "/workspace/file.txt", "deleted_lines": [5, 10], "deleted_text": "...", "total_lines": 40}
-```
-
-**Errors**: `FILE_NOT_FOUND`, `INVALID_PARAMETER` (invalid line range), `ENCODING_ERROR`
+**Errors**: `PERMISSION_DENIED` (path outside workspace)
 
 ---
 
@@ -1067,19 +1061,20 @@ Write data to task's stdin.
 
 | Group | Count | Methods |
 |-------|-------|---------|
-| **File** | 14 | `read_file` `write_file` `create_file` `delete_file` `stat_path` `list_directory` `move_file` `copy_file` `move_directory` `create_directory` `delete_directory` `replace_range` `insert_text` `delete_range` |
+| **File** | 12 | `read_file` `write_file` `delete_file` `stat_path` `list_directory` `move_file` `copy_file` `move_directory` `create_directory` `delete_directory` `replace_string_in_file` `multi_replace_string_in_file` |
 | **Search** | 3 | `find_files` `search_text` `find_symbol` |
 | **Command** | 10 | `run_command` `create_task` `stop_task` `del_task` `task_status` `wait_task` `list_tasks` `read_stdout` `read_stderr` `write_stdin` |
 | **System** | 1 | `get_system_info` |
+| **Web** | 1 | `fetch_webpage` |
 | **Protocol** | 6 | `ping` `list_tools` `get_config` `set_workspace` `get_stats` `clear_cache` |
 
-**Total**: 28 AI tools + 6 protocol methods = 34 routes
+**Total**: 27 AI tools + 6 protocol methods = 33 routes
 
 ### Write Operations
 
 Only these methods modify the filesystem:
 
-`write_file` · `create_file` · `delete_file` · `create_directory` · `delete_directory` · `move_file` · `copy_file` · `move_directory` · `replace_range` · `insert_text` · `delete_range`
+`write_file` · `delete_file` · `create_directory` · `delete_directory` · `move_file` · `copy_file` · `move_directory` · `replace_string_in_file` · `multi_replace_string_in_file`
 
 ### Streaming I/O Pattern
 

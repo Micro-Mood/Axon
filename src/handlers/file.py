@@ -7,8 +7,8 @@ handler 收到的 path 已是经过校验的绝对路径。
 
 方法分类:
   读取: read_file, stat_path, exists, list_directory
-  写入: create_file, write_file, create_directory
-  修改: replace_range, insert_text, delete_range, apply_patch
+  写入: write_file, create_directory
+  修改: replace_string_in_file, multi_replace_string_in_file, apply_patch
   移动/复制/删除: move_file, copy_file, delete_file, move_directory, delete_directory
 
 依赖:
@@ -337,29 +337,22 @@ class FileHandler(BaseHandler):
     #  写入类
     # ═══════════════════════════════════════════════════
 
-    async def create_file(
+    async def write_file(
         self,
         ctx: RequestContext,
         path: Path,
-        content: str = "",
+        content: str,
         encoding: str = "utf-8",
-        overwrite: bool = False,
     ) -> dict[str, Any]:
         """
-        创建文件
+        写入文件（文件不存在则自动创建，含父目录）
 
         Args:
             path: 目标路径
             content: 文件内容
             encoding: 写入编码
-            overwrite: 已存在时是否覆写
         """
-        if path.exists() and not overwrite:
-            raise ConcurrentModificationError(
-                f"文件已存在: {path}",
-                details={"path": str(path)},
-                suggestion="设置 overwrite=true 以覆写",
-            )
+        created = not path.exists()
 
         # 校验编码名
         encoding = self._validate_encoding(encoding)
@@ -388,68 +381,6 @@ class FileHandler(BaseHandler):
         except OSError as e:
             raise TaskFailedError(
                 f"文件写入失败: {e}",
-                details={"path": str(path), "operation": "create_file"},
-                cause=e,
-            )
-
-        size = path.stat().st_size
-
-        # 失效相关缓存
-        self._invalidate_path_cache(path)
-
-        return {
-            "path": str(path),
-            "size": size,
-            "encoding": encoding,
-            "created": True,
-        }
-
-    async def write_file(
-        self,
-        ctx: RequestContext,
-        path: Path,
-        content: str,
-        encoding: str = "utf-8",
-    ) -> dict[str, Any]:
-        """
-        覆写文件（文件必须存在）
-
-        Args:
-            path: 目标路径
-            content: 新内容
-            encoding: 写入编码
-        """
-        if not path.exists():
-            raise FileNotFoundError(
-                f"文件不存在: {path}",
-                details={"path": str(path)},
-                suggestion="使用 create_file 创建新文件",
-            )
-
-        # 校验编码名
-        encoding = self._validate_encoding(encoding)
-
-        # 检查控制字符
-        if content and has_control_chars(content):
-            ctx.warn(
-                WARNING_LARGE_FILE,
-                "内容包含不安全的控制字符（NUL 等），可能导致部分工具异常",
-                path=str(path),
-            )
-
-        try:
-            async with aiofiles.open(path, mode="w", encoding=encoding) as f:
-                await f.write(content)
-        except UnicodeEncodeError as e:
-            raise EncodingError(
-                f"内容无法用 {encoding} 编码: {e}",
-                details={"path": str(path), "encoding": encoding},
-                cause=e,
-                suggestion="尝试使用 encoding='utf-8'",
-            )
-        except OSError as e:
-            raise TaskFailedError(
-                f"文件写入失败: {e}",
                 details={"path": str(path), "operation": "write_file"},
                 cause=e,
             )
@@ -457,11 +388,14 @@ class FileHandler(BaseHandler):
         size = path.stat().st_size
         self._invalidate_path_cache(path)
 
-        return {
+        result: dict[str, Any] = {
             "path": str(path),
             "size": size,
             "encoding": encoding,
         }
+        if created:
+            result["created"] = True
+        return result
 
     async def create_directory(
         self,
@@ -485,45 +419,42 @@ class FileHandler(BaseHandler):
     #  修改类
     # ═══════════════════════════════════════════════════
 
-    async def replace_range(
+    async def replace_string_in_file(
         self,
         ctx: RequestContext,
         path: Path,
-        start_line: int,
-        end_line: int,
-        new_text: str,
+        old_string: str,
+        new_string: str,
         encoding: str = "utf-8",
     ) -> dict[str, Any]:
         """
-        替换文件中指定行范围的文本
+        在文件中查找 old_string 并替换为 new_string
+
+        old_string 必须在文件中精确匹配且仅出现一次。
 
         Args:
             path: 文件路径
-            start_line: 起始行号（1-based，含）
-            end_line: 结束行号（1-based，含）
-            new_text: 替换后的文本
+            old_string: 要查找的原始文本（必须精确匹配）
+            new_string: 替换为的新文本
             encoding: 文件编码
         """
         content, detected_enc = await self._read_text(path, encoding)
-        lines = content.splitlines(keepends=True)
-        total = len(lines)
 
-        if start_line < 1 or end_line < start_line or start_line > total:
+        count = content.count(old_string)
+        if count == 0:
             raise InvalidParameterError(
-                f"行号范围无效: [{start_line}, {end_line}]，文件共 {total} 行",
-                details={"start_line": start_line, "end_line": end_line, "total_lines": total},
+                "old_string 在文件中未找到匹配",
+                details={"path": str(path), "old_string_preview": old_string[:200]},
+                suggestion="检查 old_string 是否与文件内容完全一致（包括空格和换行）",
+            )
+        if count > 1:
+            raise InvalidParameterError(
+                f"old_string 在文件中匹配了 {count} 次，必须唯一",
+                details={"path": str(path), "match_count": count},
+                suggestion="增加上下文使 old_string 在文件中唯一",
             )
 
-        # 替换
-        end_line = min(end_line, total)
-        replaced_text = "".join(lines[start_line - 1 : end_line])
-        new_lines = new_text.splitlines(keepends=True)
-        # 确保 new_text 以换行结尾（如果原文最后一行有换行）
-        if new_text and not new_text.endswith("\n") and end_line < total:
-            new_lines.append("\n" if lines[end_line - 1].endswith("\n") else "")
-
-        lines[start_line - 1 : end_line] = new_lines
-        result_content = "".join(lines)
+        result_content = content.replace(old_string, new_string, 1)
 
         try:
             async with aiofiles.open(path, mode="w", encoding=detected_enc) as f:
@@ -537,7 +468,7 @@ class FileHandler(BaseHandler):
         except OSError as e:
             raise TaskFailedError(
                 f"文件写入失败: {e}",
-                details={"path": str(path), "operation": "replace_range"},
+                details={"path": str(path), "operation": "replace_string_in_file"},
                 cause=e,
             )
 
@@ -545,126 +476,95 @@ class FileHandler(BaseHandler):
 
         return {
             "path": str(path),
-            "replaced_lines": [start_line, end_line],
-            "old_text": replaced_text,
-            "new_text": new_text,
+            "replacements": 1,
             "total_lines": len(result_content.splitlines()),
         }
 
-    async def insert_text(
+    async def multi_replace_string_in_file(
         self,
         ctx: RequestContext,
-        path: Path,
-        line: int,
-        text: str,
+        replacements: list[dict[str, str]],
         encoding: str = "utf-8",
     ) -> dict[str, Any]:
         """
-        在指定行之前插入文本
+        批量文本替换
+
+        replacements 中每项: {"path": "...", "old_string": "...", "new_string": "..."}
+        按顺序执行，同一文件的多次替换会依次应用。
 
         Args:
-            path: 文件路径
-            line: 行号（1-based），在此行之前插入
-            text: 要插入的文本
-            encoding: 文件编码
+            replacements: 替换操作列表
+            encoding: 默认编码
         """
-        content, detected_enc = await self._read_text(path, encoding)
-        lines = content.splitlines(keepends=True)
-        total = len(lines)
+        workspace = self.config.workspace.root
+        results: list[dict[str, Any]] = []
+        succeeded = 0
+        failed = 0
 
-        if line < 1 or line > total + 1:
-            raise InvalidParameterError(
-                f"行号无效: {line}，有效范围 [1, {total + 1}]",
-                details={"line": line, "total_lines": total},
-            )
+        for i, rep in enumerate(replacements):
+            r_path = rep.get("path")
+            r_old = rep.get("old_string")
+            r_new = rep.get("new_string", "")
 
-        insert_lines = text.splitlines(keepends=True)
-        # 确保插入文本以换行结尾
-        if text and not text.endswith("\n"):
-            insert_lines[-1] += "\n"
+            if not r_path or r_old is None:
+                results.append({
+                    "index": i, "success": False,
+                    "error": "缺少 path 或 old_string",
+                })
+                failed += 1
+                continue
 
-        lines[line - 1 : line - 1] = insert_lines
-        result_content = "".join(lines)
+            try:
+                # 路径安全校验：必须在 workspace 内
+                abs_path = Path(r_path)
+                if not abs_path.is_absolute():
+                    abs_path = (workspace / r_path).resolve()
+                else:
+                    abs_path = abs_path.resolve()
 
-        try:
-            async with aiofiles.open(path, mode="w", encoding=detected_enc) as f:
-                await f.write(result_content)
-        except UnicodeEncodeError as e:
-            raise EncodingError(
-                f"文件编码写入失败 (encoding={detected_enc}): {e}",
-                details={"path": str(path), "encoding": detected_enc},
-                cause=e,
-            )
-        except OSError as e:
-            raise TaskFailedError(
-                f"文件写入失败: {e}",
-                details={"path": str(path), "operation": "insert_text"},
-                cause=e,
-            )
+                if not str(abs_path).startswith(str(workspace)):
+                    raise PermissionDeniedError(
+                        f"路径超出工作区范围: {r_path}",
+                        details={"path": r_path, "workspace": str(workspace)},
+                    )
 
-        self._invalidate_path_cache(path)
+                content, detected_enc = await self._read_text(abs_path, encoding)
+                count = content.count(r_old)
+                if count == 0:
+                    results.append({
+                        "index": i, "path": str(abs_path), "success": False,
+                        "error": "old_string 未找到匹配",
+                    })
+                    failed += 1
+                    continue
+                if count > 1:
+                    results.append({
+                        "index": i, "path": str(abs_path), "success": False,
+                        "error": f"old_string 匹配了 {count} 次，必须唯一",
+                    })
+                    failed += 1
+                    continue
+
+                result_content = content.replace(r_old, r_new, 1)
+                async with aiofiles.open(abs_path, mode="w", encoding=detected_enc) as f:
+                    await f.write(result_content)
+                self._invalidate_path_cache(abs_path)
+
+                results.append({"index": i, "path": str(abs_path), "success": True})
+                succeeded += 1
+
+            except Exception as e:
+                results.append({
+                    "index": i, "path": r_path, "success": False,
+                    "error": str(e),
+                })
+                failed += 1
 
         return {
-            "path": str(path),
-            "inserted_at": line,
-            "inserted_lines": len(insert_lines),
-            "total_lines": len(result_content.splitlines()),
-        }
-
-    async def delete_range(
-        self,
-        ctx: RequestContext,
-        path: Path,
-        start_line: int,
-        end_line: int,
-        encoding: str = "utf-8",
-    ) -> dict[str, Any]:
-        """
-        删除文件中指定行范围
-
-        Args:
-            path: 文件路径
-            start_line: 起始行号（1-based，含）
-            end_line: 结束行号（1-based，含）
-        """
-        content, detected_enc = await self._read_text(path, encoding)
-        lines = content.splitlines(keepends=True)
-        total = len(lines)
-
-        if start_line < 1 or end_line < start_line or start_line > total:
-            raise InvalidParameterError(
-                f"行号范围无效: [{start_line}, {end_line}]，文件共 {total} 行",
-                details={"start_line": start_line, "end_line": end_line, "total_lines": total},
-            )
-
-        end_line = min(end_line, total)
-        deleted_text = "".join(lines[start_line - 1 : end_line])
-        del lines[start_line - 1 : end_line]
-        result_content = "".join(lines)
-
-        try:
-            async with aiofiles.open(path, mode="w", encoding=detected_enc) as f:
-                await f.write(result_content)
-        except UnicodeEncodeError as e:
-            raise EncodingError(
-                f"文件编码写入失败 (encoding={detected_enc}): {e}",
-                details={"path": str(path), "encoding": detected_enc},
-                cause=e,
-            )
-        except OSError as e:
-            raise TaskFailedError(
-                f"文件写入失败: {e}",
-                details={"path": str(path), "operation": "delete_range"},
-                cause=e,
-            )
-
-        self._invalidate_path_cache(path)
-
-        return {
-            "path": str(path),
-            "deleted_lines": [start_line, end_line],
-            "deleted_text": deleted_text,
-            "total_lines": len(result_content.splitlines()),
+            "total": len(replacements),
+            "succeeded": succeeded,
+            "failed": failed,
+            "results": results,
         }
 
     async def apply_patch(

@@ -40,7 +40,7 @@ Axon 是一个轻量级 **MCP (Model Context Protocol)** 服务器，通过 JSON
 │  安全 → 校验 → 限流 → 并发控制 → 审计            │
 ├──────────────────────────────────────────────────┤
 │  Layer 4: 处理器                                  │
-│  File · Search · Command · System                │
+│  File · Search · Command · System · Web           │
 ├──────────────────────────────────────────────────┤
 │  Layer 3: 流管理                                  │
 │  进程 stdout/stderr 生命周期管理                  │
@@ -94,15 +94,14 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 
 ## 🛠️ 工具列表
 
-Axon 提供 **28 个 AI 工具**（自动发现插件）和 **6 个协议方法**（服务端管理）。
+Axon 提供 **27 个 AI 工具**（自动发现插件）和 **6 个协议方法**（服务端管理）。
 
-### 文件（14）
+### 文件（12）
 
 | 方法 | 说明 |
 |------|------|
 | `read_file` | 读取文件内容，自动检测编码 |
-| `write_file` | 覆写已有文件 |
-| `create_file` | 创建新文件（可选覆写） |
+| `write_file` | 写入文件内容（不存在则创建） |
 | `delete_file` | 删除文件 |
 | `stat_path` | 获取文件/目录元信息 |
 | `list_directory` | 列出目录内容，支持 glob 过滤 |
@@ -111,9 +110,8 @@ Axon 提供 **28 个 AI 工具**（自动发现插件）和 **6 个协议方法*
 | `move_directory` | 移动/重命名目录 |
 | `create_directory` | 创建目录（递归） |
 | `delete_directory` | 删除目录（递归 + 强制选项） |
-| `replace_range` | 替换文件中指定行 |
-| `insert_text` | 在指定行插入文本 |
-| `delete_range` | 删除指定行范围 |
+| `replace_string_in_file` | 在文件中查找并替换精确文本 |
+| `multi_replace_string_in_file` | 跨文件批量文本替换 |
 
 ### 搜索（3）
 
@@ -143,6 +141,12 @@ Axon 提供 **28 个 AI 工具**（自动发现插件）和 **6 个协议方法*
 | 方法 | 说明 |
 |------|------|
 | `get_system_info` | 返回操作系统、架构、Python 版本、Shell、工作区、Axon 版本 |
+
+### 网络（1）
+
+| 方法 | 说明 |
+|------|------|
+| `fetch_webpage` | 抓取网页正文内容，自动去除 HTML 标签，支持关键词定位 |
 
 ### 协议方法（6）
 
@@ -221,14 +225,15 @@ Axon/
 │   ├── core/                # L1: 配置、安全、缓存、错误、文件锁、资源管理
 │   ├── platform/            # L2: 编码、信号、文件系统、平台默认值
 │   ├── stream/              # L3: 输出缓冲区、流管理器
-│   ├── handlers/            # L4: 文件、搜索、命令、系统处理器
+│   ├── handlers/            # L4: 文件、搜索、命令、系统、网络处理器
 │   ├── middleware/          # L5: 安全、校验、限流、并发、审计
 │   ├── protocol/            # L6: JSON-RPC 编解码、路由、服务器、传输
 │   └── tools/               # 工具定义（自动发现插件）
-│       ├── file/            # 14 个文件工具
+│       ├── file/            # 12 个文件工具
 │       ├── search/          # 3 个搜索工具
 │       ├── command/         # 10 个命令工具
-│       └── system/          # 1 个系统工具
+│       ├── system/          # 1 个系统工具
+│       └── web/             # 1 个网络工具
 └── tests/                   # 测试套件
 ```
 

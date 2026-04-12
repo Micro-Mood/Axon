@@ -110,21 +110,12 @@ _METHOD_SCHEMAS: dict[str, list[_Param]] = {
         _p("path", STR, required=True, non_empty=True),
         _p("follow_symlinks", BOOL, required=False, default=True),
     ],
-    "exists": [
-        _p("path", STR, required=True, non_empty=True),
-    ],
     "list_directory": [
         _p("path", STR, required=True, non_empty=True),
         _p("pattern", STR_OR_NONE, required=False),
         _p("recursive", BOOL, required=False, default=False),
         _p("include_hidden", BOOL, required=False, default=False),
         _p("max_results", INT_OR_NONE, required=False, min_value=1),
-    ],
-    "create_file": [
-        _p("path", STR, required=True, non_empty=True),
-        _p("content", STR, required=False, default=""),
-        _p("encoding", STR, required=False, default="utf-8"),
-        _p("overwrite", BOOL, required=False, default=False),
     ],
     "write_file": [
         _p("path", STR, required=True, non_empty=True),
@@ -135,29 +126,14 @@ _METHOD_SCHEMAS: dict[str, list[_Param]] = {
         _p("path", STR, required=True, non_empty=True),
         _p("recursive", BOOL, required=False, default=True),
     ],
-    "replace_range": [
+    "replace_string_in_file": [
         _p("path", STR, required=True, non_empty=True),
-        _p("start_line", INT, required=True, min_value=1),
-        _p("end_line", INT, required=True, min_value=1),
-        _p("new_text", STR, required=True),
+        _p("old_string", STR, required=True, non_empty=True),
+        _p("new_string", STR, required=True),
         _p("encoding", STR, required=False, default="utf-8"),
     ],
-    "insert_text": [
-        _p("path", STR, required=True, non_empty=True),
-        _p("line", INT, required=True, min_value=1),
-        _p("text", STR, required=True),
-        _p("encoding", STR, required=False, default="utf-8"),
-    ],
-    "delete_range": [
-        _p("path", STR, required=True, non_empty=True),
-        _p("start_line", INT, required=True, min_value=1),
-        _p("end_line", INT, required=True, min_value=1),
-        _p("encoding", STR, required=False, default="utf-8"),
-    ],
-    "apply_patch": [
-        _p("path", STR, required=True, non_empty=True),
-        _p("patch", STR, required=True, non_empty=True),
-        _p("dry_run", BOOL, required=False, default=False),
+    "multi_replace_string_in_file": [
+        _p("replacements", LIST, required=True, non_empty=True),
         _p("encoding", STR, required=False, default="utf-8"),
     ],
     "move_file": [
@@ -198,9 +174,9 @@ _METHOD_SCHEMAS: dict[str, list[_Param]] = {
     ],
     "stop_task": [
         _p("task_id", STR, required=True, non_empty=True),
-        _p("signal", STR, required=False, default="interrupt"),
+        _p("force", BOOL, required=False, default=False),
     ],
-    "kill_task": [
+    "del_task": [
         _p("task_id", STR, required=True, non_empty=True),
     ],
     "task_status": [
@@ -234,7 +210,7 @@ _METHOD_SCHEMAS: dict[str, list[_Param]] = {
         _p("include_hidden", BOOL, required=False, default=False),
         _p("max_results", INT_OR_NONE, required=False, min_value=1),
     ],
-    "find_content": [
+    "search_text": [
         _p("query", STR, required=True, non_empty=True),
         _p("root", STR_OR_NONE, required=False),
         _p("file_pattern", STR, required=False, default="*"),
@@ -253,18 +229,14 @@ _METHOD_SCHEMAS: dict[str, list[_Param]] = {
         _p("max_results", INT_OR_NONE, required=False, min_value=1),
     ],
 
+    # ═══ WebHandler ═══
+    "fetch_webpage": [
+        _p("url", STR, required=True, non_empty=True),
+        _p("query", STR_OR_NONE, required=False),
+    ],
+
     # ═══ SystemHandler ═══
-    "ping": [],
-    "get_version": [],
-    "get_methods": [],
-    "get_config": [],
-    "set_workspace": [
-        _p("root_path", STR, required=True, non_empty=True),
-    ],
-    "get_stats": [],
-    "clear_cache": [
-        _p("bucket", STR_OR_NONE, required=False),
-    ],
+    "get_system_info": [],
 }
 
 

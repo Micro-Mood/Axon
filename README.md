@@ -41,7 +41,7 @@ Axon is a lightweight **Model Context Protocol (MCP)** server that gives AI assi
 │  → Audit                                         │
 ├──────────────────────────────────────────────────┤
 │  Layer 4: Handlers                               │
-│  File · Search · Command · System                │
+│  File · Search · Command · System · Web           │
 ├──────────────────────────────────────────────────┤
 │  Layer 3: Stream                                 │
 │  Process stdout/stderr lifecycle management      │
@@ -95,15 +95,14 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 
 ## 🛠️ Tools
 
-Axon exposes **28 AI tools** (auto-discovered plugins) and **6 protocol methods** (server management).
+Axon exposes **27 AI tools** (auto-discovered plugins) and **6 protocol methods** (server management).
 
-### File (14)
+### File (12)
 
 | Method | Description |
 |--------|-------------|
 | `read_file` | Read file content with auto-encoding detection |
-| `write_file` | Overwrite existing file |
-| `create_file` | Create new file (optional overwrite) |
+| `write_file` | Write file content (creates if not exists) |
 | `delete_file` | Delete a file |
 | `stat_path` | Get file/directory metadata |
 | `list_directory` | List directory contents with glob filter |
@@ -112,9 +111,8 @@ Axon exposes **28 AI tools** (auto-discovered plugins) and **6 protocol methods*
 | `move_directory` | Move or rename a directory |
 | `create_directory` | Create directory (recursive) |
 | `delete_directory` | Delete directory (recursive + force options) |
-| `replace_range` | Replace lines in a file |
-| `insert_text` | Insert text at a specific line |
-| `delete_range` | Delete a range of lines |
+| `replace_string_in_file` | Find and replace exact text in a file |
+| `multi_replace_string_in_file` | Batch text replacements across files |
 
 ### Search (3)
 
@@ -144,6 +142,12 @@ Axon exposes **28 AI tools** (auto-discovered plugins) and **6 protocol methods*
 | Method | Description |
 |--------|-------------|
 | `get_system_info` | Returns OS, architecture, Python version, shell, workspace, Axon version |
+
+### Web (1)
+
+| Method | Description |
+|--------|-------------|
+| `fetch_webpage` | Fetch web page content, auto-strip HTML tags, supports keyword-based paragraph extraction |
 
 ### Protocol Methods (6)
 
@@ -222,14 +226,15 @@ Axon/
 │   ├── core/                # L1: Config, Security, Cache, Errors, FileLock, Resource
 │   ├── platform/            # L2: Encoding, Signals, Filesystem, Defaults
 │   ├── stream/              # L3: OutputBuffer, StreamManager
-│   ├── handlers/            # L4: File, Search, Command, System handlers
+│   ├── handlers/            # L4: File, Search, Command, System, Web handlers
 │   ├── middleware/          # L5: Security, Validation, RateLimit, Concurrency, Audit
 │   ├── protocol/            # L6: JSON-RPC codec, Router, Server, Transport
 │   └── tools/               # Tool definitions (auto-discovered plugins)
-│       ├── file/            # 14 file operation tools
+│       ├── file/            # 12 file operation tools
 │       ├── search/          # 3 search tools
 │       ├── command/         # 10 command/task tools
-│       └── system/          # 1 system tool
+│       ├── system/          # 1 system tool
+│       └── web/             # 1 web tool
 └── tests/                   # Test suites
 ```
 
