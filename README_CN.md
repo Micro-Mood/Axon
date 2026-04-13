@@ -49,7 +49,7 @@ Axon 是一个轻量级 **MCP (Model Context Protocol)** 服务器，通过 JSON
 │  编码 · 信号 · 文件系统 · 默认值                  │
 ├──────────────────────────────────────────────────┤
 │  Layer 1: 核心                                    │
-│  配置 · 安全 · 缓存 · 错误 · 文件锁              │
+│  配置 · 安全 · 缓存 · 错误 · 文件锁 · 资源管理          │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -65,7 +65,7 @@ Axon 是一个轻量级 **MCP (Model Context Protocol)** 服务器，通过 JSON
 ### 安装依赖
 
 ```bash
-pip install pydantic aiofiles
+pip install pydantic aiofiles aiohttp
 ```
 
 ### 启动
@@ -180,16 +180,19 @@ Axon 提供 **27 个 AI 工具**（自动发现插件）和 **6 个协议方法*
 {
   "workspace": {
     "root_path": ".",
+    "allowed_extensions": [],
     "max_depth": 20
   },
   "security": {
     "blocked_paths": [],
     "blocked_commands": [],
+    "allowed_shells": [],
     "max_file_size_mb": 100,
     "follow_symlinks": false
   },
   "performance": {
     "max_concurrent_tasks": 10,
+    "cache_ttl": 60,
     "default_timeout_ms": 30000,
     "max_search_results": 1000,
     "max_output_buffer_mb": 10
@@ -201,7 +204,8 @@ Axon 提供 **27 个 AI 工具**（自动发现插件）和 **6 个协议方法*
   },
   "logging": {
     "level": "INFO",
-    "audit_enabled": true
+    "audit_enabled": true,
+    "log_file": null
   }
 }
 ```

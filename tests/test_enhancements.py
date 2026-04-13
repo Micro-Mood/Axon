@@ -18,13 +18,13 @@ def test(name, fn):
     global passed, failed
     try:
         if asyncio.iscoroutinefunction(fn):
-            asyncio.get_event_loop().run_until_complete(fn())
+            asyncio.run(fn())
         else:
             fn()
-        print(f"  ✓ {name}")
+        print(f"  [OK] {name}")
         passed += 1
     except Exception as e:
-        print(f"  ✗ {name}: {e}")
+        print(f"  [FAIL] {name}: {e}")
         failed += 1
 
 
@@ -815,25 +815,14 @@ async def test_fix_stop_task_unregister():
 test("修复B: stop_task 注销任务", test_fix_stop_task_unregister)
 
 
-async def test_fix_kill_task_unregister():
-    """修复B: kill_task 正确注销任务"""
+async def test_fix_no_kill_task_legacy_path():
+    """修复B: 旧的 kill_task 路径已移除，仅保留 stop_task"""
     config = PerformanceConfig(max_concurrent_tasks=2, max_output_buffer_mb=10)
     tracker = ResourceTracker(config)
     mw = ConcurrencyMiddleware(resource_tracker=tracker)
-
-    async def create_handler(ctx):
-        return {"status": "ok", "data": {"task_id": "task-002"}}
-
-    ctx1 = RequestContext(method="create_task", params={"command": "sleep 100"})
-    await mw(ctx1, create_handler)
-
-    async def kill_handler(ctx):
-        return {"status": "ok"}
-
-    ctx2 = RequestContext(method="kill_task", params={"task_id": "task-002"})
-    await mw(ctx2, kill_handler)
-    assert tracker.active_task_count == 0
-test("修复B: kill_task 注销任务", test_fix_kill_task_unregister)
+    assert "kill_task" not in mw._task_end
+    assert "stop_task" in mw._task_end
+test("修复B: kill_task 旧路径已移除", test_fix_no_kill_task_legacy_path)
 
 
 async def test_fix_task_id_swap_atomic():

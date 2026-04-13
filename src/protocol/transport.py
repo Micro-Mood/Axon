@@ -80,7 +80,7 @@ class TCPTransport:
                 loop.add_signal_handler(sig, self._signal_handler)
             except NotImplementedError:
                 # Windows 不完全支持 add_signal_handler
-                pass
+                logger.debug("当前平台不支持 add_signal_handler: %s", sig)
 
         try:
             await self._shutdown_event.wait()

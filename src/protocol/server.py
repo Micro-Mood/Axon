@@ -95,7 +95,11 @@ class MCPServer:
 
         # ── Layer 3: Stream ──
         self._stream_manager = StreamManager(
-            self._config.performance.max_output_buffer_mb * 1024 * 1024
+            self._config.performance.max_output_buffer_mb * 1024 * 1024,
+            finalize_timeout=max(
+                30.0,
+                self._config.performance.default_timeout_ms / 1000.0,
+            ),
         )
 
         # ── Layer 4: Handlers ──

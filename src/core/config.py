@@ -18,6 +18,11 @@ from typing import Any, Callable
 from pydantic import BaseModel, Field
 
 from .errors import ConfigLoadError
+from ..platform.defaults import (
+    default_blocked_commands,
+    default_blocked_paths,
+    default_shells,
+)
 
 
 # ═══════════════════════════════════════════════════════
@@ -145,6 +150,15 @@ def load_config(config_path: str | Path | None = None) -> MCPConfig:
     # Step 2: 创建 config（文件数据 + 默认值）
     config = MCPConfig.model_validate(file_data)
 
+    # Step 2.5: 注入平台安全默认值（仅在用户未显式配置时）
+    security_raw = file_data.get("security", {}) if isinstance(file_data, dict) else {}
+    if "blocked_paths" not in security_raw:
+        config.security.blocked_paths = default_blocked_paths()
+    if "blocked_commands" not in security_raw:
+        config.security.blocked_commands = default_blocked_commands()
+    if "allowed_shells" not in security_raw:
+        config.security.allowed_shells = default_shells()
+
     # Step 3: 环境变量覆盖
     for env_key, (section, field_name, field_type) in _ENV_MAP.items():
         env_val = os.environ.get(env_key)
@@ -183,7 +197,8 @@ class ConfigHolder:
 
     def reload(self, config_path: str | Path | None = None) -> MCPConfig:
         """重新加载配置并通知监听者"""
-        self._config = load_config(config_path)
+        new_config = load_config(config_path)
+        self._merge_into(self._config, new_config.model_dump())
         for listener in self._listeners:
             listener(self._config)
         return self._config
@@ -201,6 +216,17 @@ class ConfigHolder:
                 data[key].update(value)
             else:
                 data[key] = value
-        self._config = MCPConfig.model_validate(data)
+        new_config = MCPConfig.model_validate(data)
+        self._merge_into(self._config, new_config.model_dump())
         for listener in self._listeners:
             listener(self._config)
+
+    @staticmethod
+    def _merge_into(model: BaseModel, data: dict[str, Any]) -> None:
+        """原地更新 Pydantic 模型，保持现有对象引用不失效。"""
+        for key, value in data.items():
+            current = getattr(model, key, None)
+            if isinstance(current, BaseModel) and isinstance(value, dict):
+                ConfigHolder._merge_into(current, value)
+            else:
+                setattr(model, key, value)

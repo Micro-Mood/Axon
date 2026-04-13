@@ -63,12 +63,17 @@ class StreamManager:
         mgr.cleanup(task_id)                 # 不再需要时
     """
 
-    def __init__(self, max_buffer_size: int = 10 * 1024 * 1024):
+    def __init__(
+        self,
+        max_buffer_size: int = 10 * 1024 * 1024,
+        finalize_timeout: float = 30.0,
+    ):
         """
         Args:
             max_buffer_size: 每个流的最大缓冲字节数，默认 10MB
         """
         self._max_buffer_size = max_buffer_size
+        self._finalize_timeout = finalize_timeout
         self._streams: dict[str, _TaskStreams] = {}
 
     # ═══════════════════════════════════════════════════
@@ -157,7 +162,7 @@ class StreamManager:
         if streams.reader_tasks:
             done, pending = await asyncio.wait(
                 streams.reader_tasks,
-                timeout=30.0,
+                timeout=self._finalize_timeout,
             )
             # 超时的 reader 强制取消
             for task in pending:

@@ -4,7 +4,7 @@
 
 **Complete API specification for Axon MCP Server**
 
-Version 1.0.0 · [中文文档](API_CN.md)
+Version 0.1.0 · [中文文档](API_CN.md)
 
 </div>
 
@@ -15,6 +15,8 @@ Version 1.0.0 · [中文文档](API_CN.md)
 - [Protocol](#protocol)
 - [Error Codes](#error-codes)
 - [System API](#system-api)
+- [Web API](#web-api)
+- [Protocol Methods](#protocol-methods)
 - [File API](#file-api)
 - [Search API](#search-api)
 - [Command API](#command-api)
@@ -134,6 +136,7 @@ If warnings are present, the result includes `_warnings`:
 | `SIZE_LIMIT_EXCEEDED` | SizeLimitExceededError | 413 | -32000 |
 | `MAX_CONCURRENT_TASKS` | MaxConcurrentTasksError | 429 | -32001 |
 | `RATE_LIMIT_EXCEEDED` | RateLimitError | 429 | -32001 |
+| `PATCH_APPLY_ERROR` | PatchApplyError | 400 | -32602 |
 | `TASK_FAILED` | TaskFailedError | 500 | -32000 |
 | `INTERNAL_ERROR` | InternalError | 500 | -32603 |
 
@@ -146,6 +149,7 @@ If warnings are present, the result includes `_warnings`:
 | `LARGE_FILE` | File >1MB |
 | `HIGH_MEMORY` | High memory usage |
 | `PARTIAL_RESULT` | Result truncated or partially failed |
+| `DEPRECATED_METHOD` | Method is deprecated, use alternative |
 
 ---
 
@@ -166,7 +170,7 @@ Returns system environment information. **(AI tool)**
   "python": "3.10.4",
   "shell": "powershell",
   "workspace": "C:\\Users\\user\\project",
-  "axon_version": "1.0.0"
+  "axon_version": "0.1.0"
 }
 ```
 
@@ -214,13 +218,15 @@ Fetches the main content from a web page, automatically stripping HTML tags. **(
 | `length` | int | Returned text length |
 | `truncated` | bool | Whether truncated (exceeds 100K characters) |
 
-**Errors**: `INVALID_PARAMETER` (invalid URL format), `INTERNAL_ERROR` (network request failed/timeout)
+**Errors**: `INVALID_PARAMETER` (invalid URL format), `MCP_ERROR` (network request failed/timeout)
 
 ---
 
+## Protocol Methods
+
 ### ping
 
-Health check. **(Protocol method)**
+Health check.
 
 **Params**: none
 
@@ -234,7 +240,7 @@ Health check. **(Protocol method)**
 
 ### list_tools
 
-Returns full tool schema for AI function calling. **(Protocol method)**
+Returns full tool schema for AI function calling.
 
 **Params**: none
 
@@ -269,7 +275,7 @@ Returns full tool schema for AI function calling. **(Protocol method)**
 
 ### get_config
 
-Returns current configuration (sanitized). **(Protocol method)**
+Returns current configuration (sanitized).
 
 **Params**: none
 
@@ -277,10 +283,11 @@ Returns current configuration (sanitized). **(Protocol method)**
 
 ```json
 {
-  "workspace": {"root_path": "/home/user/workspace", "max_depth": 10},
-  "performance": {"max_concurrent_tasks": 50, "default_timeout_ms": 30000, "max_search_results": 1000},
-  "logging": {"level": "INFO", "audit_enabled": true},
-  "server": {"host": "127.0.0.1", "port": 9100}
+  "workspace": {"root_path": "/home/user/workspace", "allowed_extensions": [], "max_depth": 20},
+  "security": {"blocked_paths": [], "blocked_commands": [], "allowed_shells": [], "max_file_size_mb": 100, "follow_symlinks": false},
+  "performance": {"max_concurrent_tasks": 10, "cache_ttl": 60, "default_timeout_ms": 30000, "max_search_results": 1000, "max_output_buffer_mb": 10},
+  "logging": {"level": "INFO", "audit_enabled": true, "log_file": null},
+  "server": {"host": "127.0.0.1", "port": 9100, "transport": "tcp"}
 }
 ```
 
@@ -288,7 +295,7 @@ Returns current configuration (sanitized). **(Protocol method)**
 
 ### set_workspace
 
-Switch workspace at runtime. **(Protocol method)**
+Switch workspace at runtime.
 
 **Params**:
 
@@ -310,7 +317,7 @@ Switch workspace at runtime. **(Protocol method)**
 
 ### get_stats
 
-Cache and runtime statistics. **(Protocol method)**
+Cache and runtime statistics.
 
 **Params**: none
 
@@ -332,7 +339,7 @@ Cache and runtime statistics. **(Protocol method)**
 
 ### clear_cache
 
-Clear cache. **(Protocol method)**
+Clear cache.
 
 **Params**:
 

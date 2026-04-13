@@ -12,13 +12,13 @@ def test(name, fn):
     global passed, failed
     try:
         if asyncio.iscoroutinefunction(fn):
-            asyncio.get_event_loop().run_until_complete(fn())
+            asyncio.run(fn())
         else:
             fn()
-        print(f"  ✓ {name}")
+        print(f"  [OK] {name}")
         passed += 1
     except Exception as e:
-        print(f"  ✗ {name}: {e}")
+        print(f"  [FAIL] {name}: {e}")
         failed += 1
 
 
@@ -261,7 +261,7 @@ test("nullable 参数接受 None", test_validation_nullable)
 
 async def test_validation_strict_unknown():
     v = ValidationMiddleware(strict=True)
-    ctx = RequestContext(method="ping", params={"bogus": 1})
+    ctx = RequestContext(method="read_file", params={"path": "/test/f.txt", "bogus": 1})
     try:
         await v(ctx, dummy_handler)
         assert False
@@ -273,8 +273,9 @@ def test_get_registered_methods():
     methods = get_registered_methods()
     assert "read_file" in methods
     assert "run_command" in methods
-    assert "ping" in methods
-    assert len(methods) > 30
+    assert "search_text" in methods
+    assert "ping" not in methods
+    assert len(methods) >= 27
 test("get_registered_methods", test_get_registered_methods)
 
 def test_get_method_schema():
@@ -288,7 +289,7 @@ test("get_method_schema", test_get_method_schema)
 
 async def test_validation_max_value():
     v = ValidationMiddleware()
-    ctx = RequestContext(method="find_content", params={
+    ctx = RequestContext(method="search_text", params={
         "query": "test",
         "context_lines": 100,  # max=50
     })

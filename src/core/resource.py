@@ -151,6 +151,16 @@ class ResourceTracker:
         async with self._lock:
             self._active_tasks.discard(task_id)
 
+    async def swap_task_id(self, old_id: str, new_id: str) -> None:
+        """
+        原子替换任务 ID（临时 ID → 真实 ID）
+
+        不占用额外槽位。如果 old_id 不存在则仅 add new_id。
+        """
+        async with self._lock:
+            self._active_tasks.discard(old_id)
+            self._active_tasks.add(new_id)
+
     @property
     def active_task_count(self) -> int:
         """当前活动任务数（无锁读，允许轻微不一致）"""

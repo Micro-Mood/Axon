@@ -24,13 +24,13 @@ def test(name, fn):
     global passed, failed
     try:
         if asyncio.iscoroutinefunction(fn):
-            asyncio.get_event_loop().run_until_complete(fn())
+            asyncio.run(fn())
         else:
             fn()
-        print(f"  ✓ {name}")
+        print(f"  [OK] {name}")
         passed += 1
     except Exception as e:
-        print(f"  ✗ {name}: {e}")
+        print(f"  [FAIL] {name}: {e}")
         failed += 1
 
 
@@ -369,11 +369,12 @@ async def test_server_init():
         server = MCPServer(config)
 
         assert not server.is_running
-        assert server.router.method_count == 36  # 16+3+10+7
+        assert server.router.method_count == 33  # 27+6
         assert "read_file" in server.router
         assert "ping" in server.router
         assert "run_command" in server.router
         assert "find_files" in server.router
+        assert "list_tools" in server.router
 test("MCPServer: 初始化", test_server_init)
 
 
@@ -399,41 +400,41 @@ async def test_server_ping():
 test("MCPServer: ping", test_server_ping)
 
 
-async def test_server_get_version():
-    """get_version 端到端"""
+async def test_server_get_stats():
+    """get_stats 端到端"""
     with tempfile.TemporaryDirectory() as tmpdir:
         config = MCPConfig(workspace={"root_path": tmpdir})
         server = MCPServer(config)
 
         req = json.dumps({
             "jsonrpc": "2.0",
-            "method": "get_version",
+            "method": "get_stats",
             "id": 2,
         })
         resp = await server.handle_request(req)
         data = json.loads(resp)
-        assert data["result"]["version"] == "0.1.0"
-test("MCPServer: get_version", test_server_get_version)
+        assert "uptime_seconds" in data["result"]
+        assert "cache" in data["result"]
+test("MCPServer: get_stats", test_server_get_stats)
 
 
-async def test_server_get_methods():
-    """get_methods 返回全部方法列表"""
+async def test_server_list_tools():
+    """list_tools 返回完整工具列表"""
     with tempfile.TemporaryDirectory() as tmpdir:
         config = MCPConfig(workspace={"root_path": tmpdir})
         server = MCPServer(config)
 
         req = json.dumps({
             "jsonrpc": "2.0",
-            "method": "get_methods",
+            "method": "list_tools",
             "id": 3,
         })
         resp = await server.handle_request(req)
         data = json.loads(resp)
-        methods = data["result"]["methods"]
-        assert "ping" in methods
-        assert "read_file" in methods
-        assert data["result"]["total"] == 36
-test("MCPServer: get_methods", test_server_get_methods)
+        assert "file" in data["result"]["tools"]
+        assert any(t["name"] == "read_file" for t in data["result"]["tools"]["file"])
+        assert data["result"]["total"] == 27
+test("MCPServer: list_tools", test_server_list_tools)
 
 
 async def test_server_method_not_found():
@@ -524,7 +525,7 @@ async def test_server_batch():
 
         req = json.dumps([
             {"jsonrpc": "2.0", "method": "ping", "id": 1},
-            {"jsonrpc": "2.0", "method": "get_version", "id": 2},
+            {"jsonrpc": "2.0", "method": "get_stats", "id": 2},
         ])
         resp = await server.handle_request(req)
         data = json.loads(resp)
@@ -628,10 +629,10 @@ test("修复A: search 常量定义", test_fix_A_search_constants)
 
 
 def test_fix_B_validation_find_methods():
-    """修复B: validation schema 使用 find_* 而非 search_*"""
+    """修复B: validation schema 使用当前搜索工具名"""
     from src.middleware.validation import _METHOD_SCHEMAS
     assert "find_files" in _METHOD_SCHEMAS, "缺少 find_files"
-    assert "find_content" in _METHOD_SCHEMAS, "缺少 find_content"
+    assert "search_text" in _METHOD_SCHEMAS, "缺少 search_text"
     assert "find_symbol" in _METHOD_SCHEMAS, "缺少 find_symbol"
     assert "search_files" not in _METHOD_SCHEMAS, "残留 search_files"
     assert "search_content" not in _METHOD_SCHEMAS, "残留 search_content"

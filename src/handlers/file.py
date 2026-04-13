@@ -192,7 +192,7 @@ class FileHandler(BaseHandler):
         if is_link:
             file_type = "symlink"
 
-        attributes = get_file_attributes_from_stat(s)
+        attributes = get_file_attributes_from_stat(s, name=path.name)
 
         result = {
             "path": str(path),
@@ -360,7 +360,7 @@ class FileHandler(BaseHandler):
         # 检查控制字符
         if content and has_control_chars(content):
             ctx.warn(
-                WARNING_LARGE_FILE,
+                WARNING_PARTIAL_RESULT,
                 "内容包含不安全的控制字符（NUL 等），可能导致部分工具异常",
                 path=str(path),
             )
@@ -819,7 +819,15 @@ class FileHandler(BaseHandler):
                         os.chmod(fpath, stat.S_IWRITE)
                         func(fpath)
 
-                    shutil.rmtree(str(path), onerror=_on_error)
+                    def _on_exc(func: Any, fpath: str, exc: BaseException) -> None:
+                        os.chmod(fpath, stat.S_IWRITE)
+                        func(fpath)
+
+                    import sys as _sys
+                    if _sys.version_info >= (3, 12):
+                        shutil.rmtree(str(path), onexc=_on_exc)
+                    else:
+                        shutil.rmtree(str(path), onerror=_on_error)
                 else:
                     shutil.rmtree(str(path))
             except OSError as e:

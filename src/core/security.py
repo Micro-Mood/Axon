@@ -171,10 +171,11 @@ class SecurityChecker:
             SymlinkError
         """
         # 解析为绝对路径
-        resolved = Path(path)
-        if not resolved.is_absolute():
-            resolved = workspace / resolved
-        resolved = resolved.resolve()
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = workspace / candidate
+        candidate = candidate.absolute()
+        resolved = candidate.resolve()
 
         # workspace 边界检查
         try:
@@ -198,20 +199,26 @@ class SecurityChecker:
                 )
 
         # 符号链接检查
-        if not self._config.follow_symlinks and Path(path).is_symlink():
-            real_target = Path(path).resolve()
-            try:
-                real_target.relative_to(workspace)
-            except ValueError:
-                raise SymlinkError(
-                    f"符号链接指向工作区外: {path} → {real_target}",
-                    details={
-                        "symlink": str(path),
-                        "target": str(real_target),
-                        "workspace": str(workspace),
-                    },
-                    suggestion="设置 follow_symlinks=true 或将目标移入工作区",
-                )
+        if not self._config.follow_symlinks:
+            check_path = candidate
+            while True:
+                if check_path.exists() and check_path.is_symlink():
+                    real_target = check_path.resolve()
+                    try:
+                        real_target.relative_to(workspace)
+                    except ValueError:
+                        raise SymlinkError(
+                            f"符号链接指向工作区外: {check_path} → {real_target}",
+                            details={
+                                "symlink": str(check_path),
+                                "target": str(real_target),
+                                "workspace": str(workspace),
+                            },
+                            suggestion="设置 follow_symlinks=true 或将目标移入工作区",
+                        )
+                if check_path == workspace or check_path.parent == check_path:
+                    break
+                check_path = check_path.parent
 
         return resolved
 

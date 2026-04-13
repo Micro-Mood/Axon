@@ -164,7 +164,6 @@ class WebHandler(BaseHandler):
                     url,
                     headers={"User-Agent": "Axon-MCP/1.0"},
                     max_redirects=5,
-                    ssl=False,
                 ) as resp:
                     if resp.status != 200:
                         return {
@@ -185,9 +184,9 @@ class WebHandler(BaseHandler):
                         body = raw.decode("utf-8", errors="replace")
 
         except aiohttp.ClientError as e:
-            raise MCPError(-32000, f"网络请求失败: {e}") from e
+            raise MCPError(f"网络请求失败: {e}") from e
         except TimeoutError:
-            raise MCPError(-32000, f"请求超时 ({_REQUEST_TIMEOUT}s)") from None
+            raise MCPError(f"请求超时 ({_REQUEST_TIMEOUT}s)") from None
 
         # HTML → 纯文本
         if "html" in content_type:

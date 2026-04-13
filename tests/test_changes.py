@@ -1,6 +1,8 @@
 """验证所有修改的完整测试"""
 import os
 import sys
+import tempfile
+from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 passed = 0
@@ -10,10 +12,10 @@ def test(name, fn):
     global passed, failed
     try:
         fn()
-        print(f"  ✓ {name}")
+        print(f"  [OK] {name}")
         passed += 1
     except Exception as e:
-        print(f"  ✗ {name}: {e}")
+        print(f"  [FAIL] {name}: {e}")
         failed += 1
 
 # ═══════════════════════════════════════════
@@ -149,7 +151,7 @@ test("decode_output 基本", test_decode_output_basic)
 print("\n=== core/security.py ===")
 
 from src.core.security import SecurityChecker
-from src.core.config import SecurityConfig
+from src.core.config import SecurityConfig, MCPConfig, load_config, ConfigHolder
 from src.core.errors import InvalidParameterError, BlockedCommandError
 
 def test_shell_syntax_valid():
@@ -206,6 +208,48 @@ def test_validate_env_dangerous():
     except InvalidParameterError:
         pass
 test("env校验: 危险变量", test_validate_env_dangerous)
+
+def test_load_config_injects_platform_defaults():
+    cfg = load_config(None)
+    assert cfg.security.blocked_paths, "应注入默认 blocked_paths"
+    assert cfg.security.blocked_commands, "应注入默认 blocked_commands"
+    assert cfg.security.allowed_shells, "应注入默认 allowed_shells"
+test("配置加载: 注入平台安全默认值", test_load_config_injects_platform_defaults)
+
+def test_configholder_update_preserves_references():
+    cfg = MCPConfig()
+    holder = ConfigHolder(cfg)
+    workspace_ref = cfg.workspace
+    security_ref = cfg.security
+
+    holder.update(workspace={"root_path": "/tmp/ws"}, security={"follow_symlinks": True})
+
+    assert holder.config is cfg
+    assert cfg.workspace is workspace_ref
+    assert cfg.security is security_ref
+    assert cfg.workspace.root_path == "/tmp/ws"
+    assert cfg.security.follow_symlinks is True
+test("ConfigHolder.update: 保持对象引用", test_configholder_update_preserves_references)
+
+def test_validate_relative_symlink_against_workspace():
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace = Path(tmp)
+        outside = workspace.parent / "outside_target.txt"
+        outside.write_text("secret", encoding="utf-8")
+        link = workspace / "link.txt"
+
+        try:
+            os.symlink(outside, link)
+        except (OSError, NotImplementedError):
+            return
+
+        s = SecurityChecker(SecurityConfig(blocked_commands=[], blocked_paths=[], allowed_shells=[]))
+        try:
+            s.validate_path("link.txt", workspace)
+            assert False, "应拒绝指向工作区外的相对 symlink"
+        except Exception as e:
+            assert "符号链接" in str(e) or "workspace" in str(e).lower()
+test("路径校验: 相对 symlink 不可逃逸工作区", test_validate_relative_symlink_against_workspace)
 
 
 # ═══════════════════════════════════════════

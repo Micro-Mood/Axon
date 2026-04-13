@@ -50,7 +50,7 @@ Axon is a lightweight **Model Context Protocol (MCP)** server that gives AI assi
 │  Encoding · Signals · Filesystem · Defaults      │
 ├──────────────────────────────────────────────────┤
 │  Layer 1: Core                                   │
-│  Config · Security · Cache · Errors · FileLock   │
+│  Config · Security · Cache · Errors · FileLock · Resource │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -66,7 +66,7 @@ Strict downward dependency — no circular imports, each layer only depends on l
 ### Install Dependencies
 
 ```bash
-pip install pydantic aiofiles
+pip install pydantic aiofiles aiohttp
 ```
 
 ### Run
@@ -181,16 +181,19 @@ These are server management methods — not injected into AI tool lists, but cal
 {
   "workspace": {
     "root_path": ".",
+    "allowed_extensions": [],
     "max_depth": 20
   },
   "security": {
     "blocked_paths": [],
     "blocked_commands": [],
+    "allowed_shells": [],
     "max_file_size_mb": 100,
     "follow_symlinks": false
   },
   "performance": {
     "max_concurrent_tasks": 10,
+    "cache_ttl": 60,
     "default_timeout_ms": 30000,
     "max_search_results": 1000,
     "max_output_buffer_mb": 10
@@ -202,7 +205,8 @@ These are server management methods — not injected into AI tool lists, but cal
   },
   "logging": {
     "level": "INFO",
-    "audit_enabled": true
+    "audit_enabled": true,
+    "log_file": null
   }
 }
 ```

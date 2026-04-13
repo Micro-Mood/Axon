@@ -23,13 +23,13 @@ def test(name, fn):
     global passed, failed
     try:
         if asyncio.iscoroutinefunction(fn):
-            asyncio.get_event_loop().run_until_complete(fn())
+            asyncio.run(fn())
         else:
             fn()
-        print(f"  ✓ {name}")
+        print(f"  [OK] {name}")
         passed += 1
     except Exception as e:
-        print(f"  ✗ {name}: {e}")
+        print(f"  [FAIL] {name}: {e}")
         failed += 1
 
 
@@ -444,6 +444,40 @@ async def test_server_e2e_read_file():
         await server.shutdown()
 
 test("端到端: read_file", test_server_e2e_read_file)
+
+
+async def test_server_e2e_set_workspace_takes_effect():
+    """set_workspace 后后续文件操作应使用新的 workspace"""
+    from src.protocol.server import MCPServer
+    with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
+        from src.core.config import MCPConfig
+        config = MCPConfig(workspace={"root_path": tmp1})
+        server = MCPServer(config)
+        await server.startup()
+
+        req1 = json.dumps({
+            "jsonrpc": "2.0",
+            "method": "set_workspace",
+            "id": 21,
+            "params": {"root_path": tmp2},
+        })
+        resp1 = json.loads(await server.handle_request(req1))
+        assert "error" not in resp1, f"错误: {resp1.get('error')}"
+
+        target = Path(tmp2) / "created.txt"
+        req2 = json.dumps({
+            "jsonrpc": "2.0",
+            "method": "write_file",
+            "id": 22,
+            "params": {"path": str(target), "content": "ok"},
+        })
+        resp2 = json.loads(await server.handle_request(req2))
+        assert "error" not in resp2, f"错误: {resp2.get('error')}"
+        assert target.exists(), "write_file 应在新 workspace 下生效"
+
+        await server.shutdown()
+
+test("端到端: set_workspace 后立即生效", test_server_e2e_set_workspace_takes_effect)
 
 
 async def test_server_e2e_write_file():

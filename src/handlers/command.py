@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,6 +58,13 @@ from ..stream import StreamManager
 from .base import BaseHandler, RequestContext, Task, TaskState
 
 logger = logging.getLogger(__name__)
+
+_SAFE_ENV_KEYS = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL",
+    "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR",
+    "SYSTEMROOT", "COMSPEC", "PATHEXT", "TEMP", "TMP",
+    "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "PROGRAMDATA",
+})
 
 
 class CommandHandler(BaseHandler):
@@ -469,10 +477,18 @@ class CommandHandler(BaseHandler):
         if env and self._security:
             self._security.validate_env(env)
 
+        shell = self._resolve_shell()
+        if self._security:
+            self._security.validate_shell(shell)
+
         task_id = uuid.uuid4().hex[:12]
 
         # 合并环境变量
-        proc_env = dict(os.environ)
+        proc_env = {
+            key: value
+            for key, value in os.environ.items()
+            if key.upper() in _SAFE_ENV_KEYS
+        }
         if env:
             proc_env.update(env)
 
@@ -484,6 +500,7 @@ class CommandHandler(BaseHandler):
             "stderr": asyncio.subprocess.PIPE,
             "cwd": work_dir,
             "env": proc_env,
+            "executable": shell,
         }
         if creation_flags:
             kwargs["creationflags"] = creation_flags
@@ -519,6 +536,24 @@ class CommandHandler(BaseHandler):
         )
 
         return task_id
+
+    def _resolve_shell(self) -> str:
+        """解析实际执行 shell，并确保其在当前平台可用。"""
+        candidates = self.config.security.allowed_shells or [default_shell()]
+        for shell in candidates:
+            if Path(shell).is_absolute():
+                if Path(shell).exists():
+                    return shell
+            else:
+                resolved = shutil.which(shell)
+                if resolved:
+                    return resolved
+
+        raise InvalidParameterError(
+            "未找到可用 shell",
+            details={"allowed_shells": candidates},
+            suggestion="请检查 security.allowed_shells 配置或安装受支持的 shell",
+        )
 
     async def _timeout_monitor(self, task: Task, timeout_ms: int) -> None:
         """超时监控协程"""

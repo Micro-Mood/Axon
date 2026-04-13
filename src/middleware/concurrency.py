@@ -124,7 +124,7 @@ class ConcurrencyMiddleware:
 
     2. 任务并发: create_task 时注册到 ResourceTracker
        - 超过 max_concurrent_tasks 时拒绝
-       - stop_task/kill_task 时注销
+       - stop_task 时注销
        → 防止任务占满系统资源
 
     两个维度独立，可以只启用其中一个（构造参数控制）。
@@ -260,12 +260,7 @@ class ConcurrencyMiddleware:
             real_task_id = data.get("task_id")
 
         if real_task_id:
-            # 先注册真实 ID（幂等，不会多占槽位因为 temp_id 还在）
-            # 但需要临时放宽一个槽位来容纳两个 ID 共存
-            # 更简洁的做法: 直接替换 set 内容
-            async with self._resource_tracker._lock:
-                self._resource_tracker._active_tasks.discard(temp_id)
-                self._resource_tracker._active_tasks.add(real_task_id)
+            await self._resource_tracker.swap_task_id(temp_id, real_task_id)
         else:
             await self._resource_tracker.unregister_task(temp_id)
 
@@ -277,7 +272,7 @@ class ConcurrencyMiddleware:
         """
         任务结束: 先执行 handler → 成功后注销 task_id
 
-        task_id 从 params 中提取（stop_task/kill_task 需要指定目标）。
+        task_id 从 params 中提取（stop_task 需要指定目标）。
         """
         assert self._resource_tracker is not None
 
