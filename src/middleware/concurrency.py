@@ -199,9 +199,19 @@ class ConcurrencyMiddleware:
         if method in self._file_move:
             # 移动/复制: 对 source 和 dest 都加排他锁
             # 按路径排序加锁，避免死锁（A 锁 src→dst，B 锁 dst→src）
+            # 去重：source == dest（同名移动）时只加一把锁，避免同路径重入死锁
+            from pathlib import Path
             source = params.get("source", "")
             dest = params.get("dest", "")
-            paths = sorted([source, dest]) if source and dest else [p for p in [source, dest] if p]
+            raw_paths = [p for p in [source, dest] if p]
+            # 规范化后去重，保持排序顺序
+            seen: set[str] = set()
+            paths: list[str] = []
+            for p in sorted(raw_paths):
+                key = str(Path(p).resolve()) if p else p
+                if key not in seen:
+                    seen.add(key)
+                    paths.append(p)
 
             if len(paths) == 2:
                 async with self._file_locks.write_lock(paths[0]):
