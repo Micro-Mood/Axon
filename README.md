@@ -27,6 +27,7 @@ Axon is a lightweight **Model Context Protocol (MCP)** server that gives AI assi
 | ⚙️ **Command Execution** | Sync run or async task management with streaming stdout/stderr |
 | 🔒 **Security Built-in** | Path boundary enforcement, dangerous command blocking (50+ patterns), rate limiting |
 | 🧩 **Plugin Architecture** | Add new tools by dropping a single `.py` file — zero core changes needed |
+| 📝 **Notion Integration** | Search pages/databases, read pages, query databases, create pages, and append blocks through Notion API |
 | 🌐 **Cross-Platform** | Windows, Linux, macOS — platform differences handled transparently |
 
 ## 🏗️ Architecture
@@ -95,7 +96,7 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 
 ## 🛠️ Tools
 
-Axon exposes **27 AI tools** (auto-discovered plugins) and **6 protocol methods** (server management).
+Axon exposes **32 AI tools** (auto-discovered plugins) and **6 protocol methods** (server management).
 
 ### File (12)
 
@@ -143,11 +144,18 @@ Axon exposes **27 AI tools** (auto-discovered plugins) and **6 protocol methods*
 |--------|-------------|
 | `get_system_info` | Returns OS, architecture, Python version, shell, workspace, Axon version |
 
-### Web (1)
+### Web (6)
 
 | Method | Description |
 |--------|-------------|
 | `fetch_webpage` | Fetch web page content, auto-strip HTML tags, supports keyword-based paragraph extraction |
+| `notion_search` | Search Notion pages and databases |
+| `notion_get_page` | Get Notion page metadata and up to two levels of block content |
+| `notion_query_database` | Query a Notion database and return lightweight page results |
+| `notion_create_page` | Create a Notion page or database entry |
+| `notion_append_blocks` | Append paragraph, heading, list, quote, or code blocks to a Notion page |
+
+Notion credentials are not stored by Axon. Callers must pass `api_key` per request.
 
 ### Protocol Methods (6)
 
@@ -238,7 +246,7 @@ Axon/
 │       ├── search/          # 3 search tools
 │       ├── command/         # 10 command/task tools
 │       ├── system/          # 1 system tool
-│       └── web/             # 1 web tool
+│       └── web/             # 6 web/Notion tools
 └── tests/                   # Test suites
 ```
 

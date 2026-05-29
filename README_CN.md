@@ -27,6 +27,7 @@ Axon 是一个轻量级 **MCP (Model Context Protocol)** 服务器，通过 JSON
 | ⚙️ **命令执行** | 同步执行或异步任务管理，支持流式读取 stdout/stderr |
 | 🔒 **内置安全** | 路径边界、危险命令拦截（50+ 模式）、限流 |
 | 🧩 **插件架构** | 新增工具只需添加一个 `.py` 文件，无需改核心代码 |
+| 📝 **Notion 集成** | 通过 Notion API 搜索页面/数据库、读取页面、查询数据库、创建页面和追加内容块 |
 | 🌐 **跨平台** | Windows / Linux / macOS，平台差异透明处理 |
 
 ## 🏗️ 架构
@@ -94,7 +95,7 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 
 ## 🛠️ 工具列表
 
-Axon 提供 **27 个 AI 工具**（自动发现插件）和 **6 个协议方法**（服务端管理）。
+Axon 提供 **32 个 AI 工具**（自动发现插件）和 **6 个协议方法**（服务端管理）。
 
 ### 文件（12）
 
@@ -142,11 +143,18 @@ Axon 提供 **27 个 AI 工具**（自动发现插件）和 **6 个协议方法*
 |------|------|
 | `get_system_info` | 返回操作系统、架构、Python 版本、Shell、工作区、Axon 版本 |
 
-### 网络（1）
+### 网络（6）
 
 | 方法 | 说明 |
 |------|------|
 | `fetch_webpage` | 抓取网页正文内容，自动去除 HTML 标签，支持关键词定位 |
+| `notion_search` | 搜索 Notion 页面和数据库 |
+| `notion_get_page` | 获取 Notion 页面的元数据和最多两层 block 正文 |
+| `notion_query_database` | 查询 Notion 数据库并返回精简页面结果 |
+| `notion_create_page` | 在 Notion 中创建页面或数据库条目 |
+| `notion_append_blocks` | 向 Notion 页面追加段落、标题、列表、引用或代码块 |
+
+Axon 不保存 Notion 凭据；调用方需在每次请求中传入 `api_key`。
 
 ### 协议方法（6）
 
@@ -237,7 +245,7 @@ Axon/
 │       ├── search/          # 3 个搜索工具
 │       ├── command/         # 10 个命令工具
 │       ├── system/          # 1 个系统工具
-│       └── web/             # 1 个网络工具
+│       └── web/             # 6 个网络/Notion 工具
 └── tests/                   # 测试套件
 ```
 
