@@ -8,13 +8,14 @@ from ...handlers.base import RequestContext
 
 tool = ToolDef(
     name="notion_create_comment",
-    description="在 Notion 页面上添加新评论（需要集成具备评论写入权限）",
+    description="在 Notion 页面或 block 上添加新评论（需要集成具备评论写入权限）",
     lock="none",
     is_write=True,
     params=[
         param("api_key", STR, non_empty=True),
         param("block_id", STR, non_empty=True),
         param("content", STR, non_empty=True),
+        param("parent_type", STR, required=False),
     ],
 )
 

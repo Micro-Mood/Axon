@@ -708,8 +708,16 @@ class NotionHandler(BaseHandler):
         block_id: str = params["block_id"]
         content: str = params["content"]
 
+        parent_type = str(params.get("parent_type") or "page").lower()
+        if parent_type not in ("page", "block"):
+            raise InvalidParameterError(
+                "parent_type", "必须是 'page' 或 'block'"
+            )
+
+        parent_key = "block_id" if parent_type == "block" else "page_id"
+
         body = {
-            "parent": {"page_id": block_id},
+            "parent": {parent_key: block_id},
             "rich_text": [{"type": "text", "text": {"content": content}}],
         }
         data = await self._notion_post("/comments", api_key, body)
