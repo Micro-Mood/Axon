@@ -4,17 +4,44 @@
 
 <h3>⚡ 轻量级跨平台 MCP Server</h3>
 
+<p>
+  <a href="https://www.notion.so/product">
+    <img src="https://img.shields.io/badge/Notion-%E5%B7%B2%E6%8E%A5%E5%85%A5-000000?logo=notion&logoColor=white" alt="Notion 已接入" />
+  </a>
+  <br/>
+  支持搜索、页面、数据库、内容块与评论，共 15 个内置 Notion 工具。
+</p>
+
 **为 AI 助手设计的 JSON-RPC 2.0 文件与命令操作服务**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20|%20Linux%20|%20macOS-blue.svg)]()
 
+<table>
+<tr>
+<td align="center"><strong>42</strong><br/>AI 工具</td>
+<td align="center"><strong>6</strong><br/>协议方法</td>
+<td align="center"><strong>15</strong><br/>Notion 工具</td>
+<td align="center"><strong>TCP / Stdio</strong><br/>双传输模式</td>
+</tr>
+</table>
+
+<p>
+  <a href="#overview">概览</a> ·
+  <a href="#architecture">架构</a> ·
+  <a href="#quick-start">快速开始</a> ·
+  <a href="#tools">工具</a> ·
+  <a href="#configuration">配置</a>
+</p>
+
 [**English**](README.md)
 
 </div>
 
 ---
+
+<a id="overview"></a>
 
 ## ✨ Axon 是什么？
 
@@ -29,6 +56,8 @@ Axon 是一个轻量级 **MCP (Model Context Protocol)** 服务器，通过 JSON
 | 🧩 **插件架构** | 新增工具只需添加一个 `.py` 文件，无需改核心代码 |
 | 📝 **Notion 集成** | 完整 Notion API：搜索、读写、创建、查询数据库、管理内容块和评论 — 15 个工具 |
 | 🌐 **跨平台** | Windows / Linux / macOS，平台差异透明处理 |
+
+<a id="architecture"></a>
 
 ## 🏗️ 架构
 
@@ -55,6 +84,8 @@ Axon 是一个轻量级 **MCP (Model Context Protocol)** 服务器，通过 JSON
 ```
 
 严格的向下依赖 — 零循环引用，每层只依赖下层。
+
+<a id="quick-start"></a>
 
 ## 🚀 快速开始
 
@@ -92,6 +123,8 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 ```json
 {"jsonrpc":"2.0","id":1,"result":{"status":"ok","uptime_seconds":42.1}}
 ```
+
+<a id="tools"></a>
 
 ## 🛠️ 工具列表
 
@@ -188,6 +221,8 @@ Axon 提供 **42 个 AI 工具**（自动发现插件）和 **6 个协议方法*
 | `set_workspace` | 运行时切换工作区 |
 | `get_stats` | 缓存和任务统计 |
 | `clear_cache` | 清空缓存 |
+
+<a id="configuration"></a>
 
 ## ⚙️ 配置
 

@@ -4,17 +4,44 @@
 
 <h3>⚡ Lightweight Cross-Platform MCP Server</h3>
 
+<p>
+  <a href="https://www.notion.so/product">
+    <img src="https://img.shields.io/badge/Notion-Integrated-000000?logo=notion&logoColor=white" alt="Notion Integrated" />
+  </a>
+  <br/>
+  15 built-in Notion tools for search, pages, databases, blocks, and comments.
+</p>
+
 **A JSON-RPC 2.0 file & command operation server designed for AI assistants**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20|%20Linux%20|%20macOS-blue.svg)]()
 
+<table>
+<tr>
+<td align="center"><strong>42</strong><br/>AI Tools</td>
+<td align="center"><strong>6</strong><br/>Protocol Methods</td>
+<td align="center"><strong>15</strong><br/>Notion Tools</td>
+<td align="center"><strong>TCP / Stdio</strong><br/>Dual Transport</td>
+</tr>
+</table>
+
+<p>
+  <a href="#overview">Overview</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#tools">Tools</a> ·
+  <a href="#configuration">Configuration</a>
+</p>
+
 [**中文文档**](README_CN.md)
 
 </div>
 
 ---
+
+<a id="overview"></a>
 
 ## ✨ What is Axon?
 
@@ -29,6 +56,8 @@ Axon is a lightweight **Model Context Protocol (MCP)** server that gives AI assi
 | 🧩 **Plugin Architecture** | Add new tools by dropping a single `.py` file — zero core changes needed |
 | 📝 **Notion Integration** | Full Notion API: search, read, write, create, query databases, manage blocks and comments — 15 tools |
 | 🌐 **Cross-Platform** | Windows, Linux, macOS — platform differences handled transparently |
+
+<a id="architecture"></a>
 
 ## 🏗️ Architecture
 
@@ -56,6 +85,8 @@ Axon is a lightweight **Model Context Protocol (MCP)** server that gives AI assi
 ```
 
 Strict downward dependency — no circular imports, each layer only depends on layers below it.
+
+<a id="quick-start"></a>
 
 ## 🚀 Quick Start
 
@@ -93,6 +124,8 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 ```json
 {"jsonrpc":"2.0","id":1,"result":{"status":"ok","uptime_seconds":42.1}}
 ```
+
+<a id="tools"></a>
 
 ## 🛠️ Tools
 
@@ -189,6 +222,8 @@ These are server management methods — not injected into AI tool lists, but cal
 | `set_workspace` | Switch workspace at runtime |
 | `get_stats` | Cache and task statistics |
 | `clear_cache` | Clear cache (all or by bucket) |
+
+<a id="configuration"></a>
 
 ## ⚙️ Configuration
 
