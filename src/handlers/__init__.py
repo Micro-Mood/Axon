@@ -20,6 +20,7 @@ Layer 4: Handlers — 业务逻辑层
 from .base import BaseHandler, RequestContext, Task, TaskState
 from .command import CommandHandler
 from .file import FileHandler
+from .notion import NotionHandler
 from .search import SearchHandler
 from .system import SystemHandler
 from .web import WebHandler
@@ -36,4 +37,5 @@ __all__ = [
     "CommandHandler",
     "SystemHandler",
     "WebHandler",
+    "NotionHandler",
 ]

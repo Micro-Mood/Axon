@@ -1,4 +1,4 @@
-"""在 Notion 中创建新页面"""
+"""在 Notion 中创建新页面或数据库条目"""
 from __future__ import annotations
 
 from typing import Any

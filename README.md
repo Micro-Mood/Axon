@@ -27,7 +27,7 @@ Axon is a lightweight **Model Context Protocol (MCP)** server that gives AI assi
 | ⚙️ **Command Execution** | Sync run or async task management with streaming stdout/stderr |
 | 🔒 **Security Built-in** | Path boundary enforcement, dangerous command blocking (50+ patterns), rate limiting |
 | 🧩 **Plugin Architecture** | Add new tools by dropping a single `.py` file — zero core changes needed |
-| 📝 **Notion Integration** | Search pages/databases, read pages, query databases, create pages, and append blocks through Notion API |
+| 📝 **Notion Integration** | Full Notion API: search, read, write, create, query databases, manage blocks and comments — 15 tools |
 | 🌐 **Cross-Platform** | Windows, Linux, macOS — platform differences handled transparently |
 
 ## 🏗️ Architecture
@@ -42,7 +42,7 @@ Axon is a lightweight **Model Context Protocol (MCP)** server that gives AI assi
 │  → Audit                                         │
 ├──────────────────────────────────────────────────┤
 │  Layer 4: Handlers                               │
-│  File · Search · Command · System · Web           │
+│  File · Search · Command · System · Web · Notion           │
 ├──────────────────────────────────────────────────┤
 │  Layer 3: Stream                                 │
 │  Process stdout/stderr lifecycle management      │
@@ -96,7 +96,7 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 
 ## 🛠️ Tools
 
-Axon exposes **32 AI tools** (auto-discovered plugins) and **6 protocol methods** (server management).
+Axon exposes **42 AI tools** (auto-discovered plugins) and **6 protocol methods** (server management).
 
 ### File (12)
 
@@ -144,18 +144,38 @@ Axon exposes **32 AI tools** (auto-discovered plugins) and **6 protocol methods*
 |--------|-------------|
 | `get_system_info` | Returns OS, architecture, Python version, shell, workspace, Axon version |
 
-### Web (6)
+### Web (1)
 
 | Method | Description |
 |--------|-------------|
 | `fetch_webpage` | Fetch web page content, auto-strip HTML tags, supports keyword-based paragraph extraction |
-| `notion_search` | Search Notion pages and databases |
-| `notion_get_page` | Get Notion page metadata and up to two levels of block content |
-| `notion_query_database` | Query a Notion database and return lightweight page results |
-| `notion_create_page` | Create a Notion page or database entry |
-| `notion_append_blocks` | Append paragraph, heading, list, quote, or code blocks to a Notion page |
 
-Notion credentials are not stored by Axon. Callers must pass `api_key` per request.
+### Notion (15)
+
+> **Setup**: Create an integration token at [![Notion Integrations](https://img.shields.io/badge/Notion-My%20Integrations-lightgray?logo=notion)](https://www.notion.so/my-integrations), then share individual pages with that integration. Pass `api_key` per request — Axon does not store credentials.
+
+<details>
+<summary>Show all Notion tools</summary>
+
+| Method | Description |
+|--------|-------------|
+| `notion_search` | Search Notion pages and databases |
+| `notion_get_page` | Get page metadata and block content (supports `max_blocks` + `start_cursor` pagination) |
+| `notion_get_block_children` | Paginated reading of block children — use when `notion_get_page` returns `has_more` |
+| `notion_query_database` | Query a Notion database and return lightweight page results |
+| `notion_get_comments` | Get comments on a page or block |
+| `notion_list_users` | List workspace members |
+| `notion_create_page` | Create a Notion page or database entry |
+| `notion_update_page` | Update a page title or properties |
+| `notion_archive_page` | Archive (trash) a page — recoverable from Notion UI |
+| `notion_append_blocks` | Append paragraph, heading, list, quote, or code blocks |
+| `notion_update_block` | Update the content of a block |
+| `notion_delete_block` | Delete (archive) a block |
+| `notion_create_database` | Create an inline database inside a page |
+| `notion_update_database` | Update a database title or property schema |
+| `notion_create_comment` | Add a comment to a page |
+
+</details>
 
 ### Protocol Methods (6)
 
@@ -238,7 +258,7 @@ Axon/
 │   ├── core/                # L1: Config, Security, Cache, Errors, FileLock, Resource
 │   ├── platform/            # L2: Encoding, Signals, Filesystem, Defaults
 │   ├── stream/              # L3: OutputBuffer, StreamManager
-│   ├── handlers/            # L4: File, Search, Command, System, Web handlers
+│   ├── handlers/            # L4: File, Search, Command, System, Web, Notion handlers
 │   ├── middleware/          # L5: Security, Validation, RateLimit, Concurrency, Audit
 │   ├── protocol/            # L6: JSON-RPC codec, Router, Server, Transport
 │   └── tools/               # Tool definitions (auto-discovered plugins)
@@ -246,7 +266,8 @@ Axon/
 │       ├── search/          # 3 search tools
 │       ├── command/         # 10 command/task tools
 │       ├── system/          # 1 system tool
-│       └── web/             # 6 web/Notion tools
+│       ├── web/             # 1 web tool
+│       └── notion/          # 15 Notion API tools
 └── tests/                   # Test suites
 ```
 

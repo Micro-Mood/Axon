@@ -34,6 +34,7 @@ from ..handlers.command import CommandHandler
 from ..handlers.file import FileHandler
 from ..handlers.search import SearchHandler
 from ..handlers.system import SystemHandler
+from ..handlers.notion import NotionHandler
 from ..handlers.web import WebHandler
 from ..middleware import build_default_chain
 from ..middleware.chain import MiddlewareChain
@@ -115,6 +116,7 @@ class MCPServer:
             self._config_holder,
         )
         self._web_handler = WebHandler(self._config, self._cache)
+        self._notion_handler = NotionHandler(self._config, self._cache)
 
         # ── Layer 6: Router ──
         self._router = MethodRouter()
@@ -146,6 +148,7 @@ class MCPServer:
             "command": self._command_handler,
             "system": self._system_handler,
             "web": self._web_handler,
+            "notion": self._notion_handler,
         }
 
         for name, tool_def in self._tools.items():

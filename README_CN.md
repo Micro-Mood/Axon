@@ -27,7 +27,7 @@ Axon 是一个轻量级 **MCP (Model Context Protocol)** 服务器，通过 JSON
 | ⚙️ **命令执行** | 同步执行或异步任务管理，支持流式读取 stdout/stderr |
 | 🔒 **内置安全** | 路径边界、危险命令拦截（50+ 模式）、限流 |
 | 🧩 **插件架构** | 新增工具只需添加一个 `.py` 文件，无需改核心代码 |
-| 📝 **Notion 集成** | 通过 Notion API 搜索页面/数据库、读取页面、查询数据库、创建页面和追加内容块 |
+| 📝 **Notion 集成** | 完整 Notion API：搜索、读写、创建、查询数据库、管理内容块和评论 — 15 个工具 |
 | 🌐 **跨平台** | Windows / Linux / macOS，平台差异透明处理 |
 
 ## 🏗️ 架构
@@ -41,7 +41,7 @@ Axon 是一个轻量级 **MCP (Model Context Protocol)** 服务器，通过 JSON
 │  安全 → 校验 → 限流 → 并发控制 → 审计            │
 ├──────────────────────────────────────────────────┤
 │  Layer 4: 处理器                                  │
-│  File · Search · Command · System · Web           │
+│  File · Search · Command · System · Web · Notion           │
 ├──────────────────────────────────────────────────┤
 │  Layer 3: 流管理                                  │
 │  进程 stdout/stderr 生命周期管理                  │
@@ -95,7 +95,7 @@ echo '{"jsonrpc":"2.0","method":"ping","params":{},"id":1}' | nc localhost 9100
 
 ## 🛠️ 工具列表
 
-Axon 提供 **32 个 AI 工具**（自动发现插件）和 **6 个协议方法**（服务端管理）。
+Axon 提供 **42 个 AI 工具**（自动发现插件）和 **6 个协议方法**（服务端管理）。
 
 ### 文件（12）
 
@@ -143,18 +143,38 @@ Axon 提供 **32 个 AI 工具**（自动发现插件）和 **6 个协议方法*
 |------|------|
 | `get_system_info` | 返回操作系统、架构、Python 版本、Shell、工作区、Axon 版本 |
 
-### 网络（6）
+### 网络（1）
 
 | 方法 | 说明 |
 |------|------|
 | `fetch_webpage` | 抓取网页正文内容，自动去除 HTML 标签，支持关键词定位 |
-| `notion_search` | 搜索 Notion 页面和数据库 |
-| `notion_get_page` | 获取 Notion 页面的元数据和最多两层 block 正文 |
-| `notion_query_database` | 查询 Notion 数据库并返回精简页面结果 |
-| `notion_create_page` | 在 Notion 中创建页面或数据库条目 |
-| `notion_append_blocks` | 向 Notion 页面追加段落、标题、列表、引用或代码块 |
 
-Axon 不保存 Notion 凭据；调用方需在每次请求中传入 `api_key`。
+### Notion（15）
+
+> **配置**：在 [![Notion Integrations](https://img.shields.io/badge/Notion-My%20Integrations-lightgray?logo=notion)](https://www.notion.so/my-integrations) 创建集成并复制 token，然后将需要操作的页面共享给该集成。每次请求传入 `api_key` — Axon 不保存凭据。
+
+<details>
+<summary>展开全部 Notion 工具</summary>
+
+| 方法 | 说明 |
+|------|------|
+| `notion_search` | 搜索 Notion 页面和数据库 |
+| `notion_get_page` | 获取页面元数据和内容块（支持 `max_blocks` + `start_cursor` 分页） |
+| `notion_get_block_children` | 分页读取内容块 — 当 `notion_get_page` 返回 `has_more` 时续读 |
+| `notion_query_database` | 查询数据库并返回精简页面结果 |
+| `notion_get_comments` | 获取页面或内容块的评论 |
+| `notion_list_users` | 列出工作区成员 |
+| `notion_create_page` | 创建页面或数据库条目 |
+| `notion_update_page` | 更新页面标题或属性 |
+| `notion_archive_page` | 归档（移入回收站）页面 — 可在 Notion 界面恢复 |
+| `notion_append_blocks` | 向页面追加段落、标题、列表、引用或代码块 |
+| `notion_update_block` | 更新内容块的文本 |
+| `notion_delete_block` | 删除（归档）内容块 |
+| `notion_create_database` | 在页面内创建内联数据库 |
+| `notion_update_database` | 更新数据库标题或属性架构 |
+| `notion_create_comment` | 向页面添加评论 |
+
+</details>
 
 ### 协议方法（6）
 
@@ -237,7 +257,7 @@ Axon/
 │   ├── core/                # L1: 配置、安全、缓存、错误、文件锁、资源管理
 │   ├── platform/            # L2: 编码、信号、文件系统、平台默认值
 │   ├── stream/              # L3: 输出缓冲区、流管理器
-│   ├── handlers/            # L4: 文件、搜索、命令、系统、网络处理器
+│   ├── handlers/            # L4: 文件、搜索、命令、系统、网络、Notion 处理器
 │   ├── middleware/          # L5: 安全、校验、限流、并发、审计
 │   ├── protocol/            # L6: JSON-RPC 编解码、路由、服务器、传输
 │   └── tools/               # 工具定义（自动发现插件）
@@ -245,7 +265,8 @@ Axon/
 │       ├── search/          # 3 个搜索工具
 │       ├── command/         # 10 个命令工具
 │       ├── system/          # 1 个系统工具
-│       └── web/             # 6 个网络/Notion 工具
+│       ├── web/             # 1 个网络工具
+│       └── notion/          # 15 个 Notion API 工具
 └── tests/                   # 测试套件
 ```
 
